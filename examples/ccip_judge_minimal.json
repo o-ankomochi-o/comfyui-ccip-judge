@@ -1,0 +1,127 @@
+{
+  "last_node_id": 10,
+  "last_link_id": 20,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoadImagesFromDir //Inspire",
+      "pos": [0, 0],
+      "size": [330, 220],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {"name": "IMAGE", "type": "IMAGE", "links": [1, 2, 3, 4]}
+      ],
+      "title": "Generated batch loader",
+      "properties": {"Node name for S&R": "LoadImagesFromDir //Inspire"},
+      "widgets_values": ["./exp_20260516", 0, 0, false]
+    },
+    {
+      "id": 2,
+      "type": "CCIPJudge_CCIPScore",
+      "pos": [400, 0],
+      "size": [340, 160],
+      "inputs": [
+        {"name": "image", "type": "IMAGE", "link": 1},
+        {"name": "reference_image", "type": "IMAGE", "link": null, "shape": 7}
+      ],
+      "outputs": [
+        {"name": "distance", "type": "FLOAT", "links": [10]},
+        {"name": "pass_mask", "type": "BOOLEAN", "links": null},
+        {"name": "info", "type": "STRING", "links": null}
+      ],
+      "properties": {"Node name for S&R": "CCIPJudge_CCIPScore"},
+      "widgets_values": [0.213, "ccip-caformer_b36-24", "./lora_eval/training"]
+    },
+    {
+      "id": 3,
+      "type": "CCIPJudge_OKSScore",
+      "pos": [400, 200],
+      "size": [340, 160],
+      "inputs": [
+        {"name": "image", "type": "IMAGE", "link": 2},
+        {"name": "reference_image", "type": "IMAGE", "link": null, "shape": 7}
+      ],
+      "outputs": [
+        {"name": "oks", "type": "FLOAT", "links": [11]},
+        {"name": "pass_mask", "type": "BOOLEAN", "links": null},
+        {"name": "info", "type": "STRING", "links": null}
+      ],
+      "properties": {"Node name for S&R": "CCIPJudge_OKSScore"},
+      "widgets_values": [0.5, "./lora_eval/training", 0.0]
+    },
+    {
+      "id": 4,
+      "type": "CCIPJudge_AngleScore",
+      "pos": [400, 400],
+      "size": [340, 160],
+      "inputs": [
+        {"name": "image", "type": "IMAGE", "link": 3},
+        {"name": "reference_image", "type": "IMAGE", "link": null, "shape": 7}
+      ],
+      "outputs": [
+        {"name": "angle_distance", "type": "FLOAT", "links": [12]},
+        {"name": "pass_mask", "type": "BOOLEAN", "links": null},
+        {"name": "info", "type": "STRING", "links": null}
+      ],
+      "properties": {"Node name for S&R": "CCIPJudge_AngleScore"},
+      "widgets_values": [0.5, "./lora_eval/training", 1.0]
+    },
+    {
+      "id": 5,
+      "type": "CCIPJudge_ThreeStageFilter",
+      "pos": [800, 200],
+      "size": [340, 180],
+      "inputs": [
+        {"name": "ccip_distance", "type": "FLOAT", "link": 10},
+        {"name": "oks", "type": "FLOAT", "link": 11},
+        {"name": "angle_distance", "type": "FLOAT", "link": 12}
+      ],
+      "outputs": [
+        {"name": "pass_mask", "type": "BOOLEAN", "links": [13]},
+        {"name": "info", "type": "STRING", "links": null}
+      ],
+      "properties": {"Node name for S&R": "CCIPJudge_ThreeStageFilter"},
+      "widgets_values": [0.213, 0.5, 0.5]
+    },
+    {
+      "id": 6,
+      "type": "CCIPJudge_ImageRouter",
+      "pos": [1200, 100],
+      "size": [380, 220],
+      "inputs": [
+        {"name": "image", "type": "IMAGE", "link": 4},
+        {"name": "pass_mask", "type": "BOOLEAN", "link": 13}
+      ],
+      "outputs": [
+        {"name": "liked", "type": "IMAGE", "links": null},
+        {"name": "disliked", "type": "IMAGE", "links": null},
+        {"name": "info", "type": "STRING", "links": null}
+      ],
+      "properties": {"Node name for S&R": "CCIPJudge_ImageRouter"},
+      "widgets_values": [
+        "./ipadapter/ipa_liked",
+        "./ipadapter/ipa_disliked",
+        "liked",
+        "disliked",
+        true
+      ]
+    }
+  ],
+  "links": [
+    [1, 1, 0, 2, 0, "IMAGE"],
+    [2, 1, 0, 3, 0, "IMAGE"],
+    [3, 1, 0, 4, 0, "IMAGE"],
+    [4, 1, 0, 6, 0, "IMAGE"],
+    [10, 2, 0, 5, 0, "FLOAT"],
+    [11, 3, 0, 5, 1, "FLOAT"],
+    [12, 4, 0, 5, 2, "FLOAT"],
+    [13, 5, 0, 6, 1, "BOOLEAN"]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

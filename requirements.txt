@@ -1,0 +1,6 @@
+dghs-imgutils>=0.7.0
+onnxruntime
+huggingface_hub
+opencv-python
+numpy
+Pillow

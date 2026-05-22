@@ -1,0 +1,21 @@
+[project]
+name = "comfyui-ccip-judge"
+description = "Anime character image evaluation nodes (CCIP + OKS + Angle) for ComfyUI"
+version = "0.1.0"
+license = {text = "MIT"}
+dependencies = [
+  "dghs-imgutils>=0.7.0",
+  "onnxruntime",
+  "huggingface_hub",
+  "opencv-python",
+  "numpy",
+  "Pillow",
+]
+
+[project.urls]
+Repository = "https://github.com/o-ankomochi-o/comfyui-ccip-judge"
+
+[tool.comfy]
+PublisherId = "o-ankomochi-o"
+DisplayName = "CCIP Judge"
+Icon = ""
