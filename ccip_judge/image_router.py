@@ -53,6 +53,7 @@ class ImageRouter:
     RETURN_NAMES = ("liked", "disliked", "info")
     FUNCTION = "route"
     CATEGORY = "image_judge"
+    OUTPUT_NODE = True  # writes to disk; allows running with no downstream consumers
 
     def route(self, image, pass_mask, save_liked_dir, save_disliked_dir,
               liked_prefix, disliked_prefix, clear_dirs_before_save):

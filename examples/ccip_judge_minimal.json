@@ -1,6 +1,6 @@
 {
   "last_node_id": 10,
-  "last_link_id": 20,
+  "last_link_id": 22,
   "nodes": [
     {
       "id": 1,
@@ -96,8 +96,8 @@
         {"name": "pass_mask", "type": "BOOLEAN", "link": 13}
       ],
       "outputs": [
-        {"name": "liked", "type": "IMAGE", "links": null},
-        {"name": "disliked", "type": "IMAGE", "links": null},
+        {"name": "liked", "type": "IMAGE", "links": [20]},
+        {"name": "disliked", "type": "IMAGE", "links": [21]},
         {"name": "info", "type": "STRING", "links": null}
       ],
       "properties": {"Node name for S&R": "CCIPJudge_ImageRouter"},
@@ -108,6 +108,30 @@
         "disliked",
         true
       ]
+    },
+    {
+      "id": 7,
+      "type": "PreviewImage",
+      "pos": [1650, 0],
+      "size": [320, 320],
+      "inputs": [
+        {"name": "images", "type": "IMAGE", "link": 20}
+      ],
+      "outputs": [],
+      "title": "Preview liked",
+      "properties": {"Node name for S&R": "PreviewImage"}
+    },
+    {
+      "id": 8,
+      "type": "PreviewImage",
+      "pos": [1650, 360],
+      "size": [320, 320],
+      "inputs": [
+        {"name": "images", "type": "IMAGE", "link": 21}
+      ],
+      "outputs": [],
+      "title": "Preview disliked",
+      "properties": {"Node name for S&R": "PreviewImage"}
     }
   ],
   "links": [
@@ -118,7 +142,9 @@
     [10, 2, 0, 5, 0, "FLOAT"],
     [11, 3, 0, 5, 1, "FLOAT"],
     [12, 4, 0, 5, 2, "FLOAT"],
-    [13, 5, 0, 6, 1, "BOOLEAN"]
+    [13, 5, 0, 6, 1, "BOOLEAN"],
+    [20, 6, 0, 7, 0, "IMAGE"],
+    [21, 6, 1, 8, 0, "IMAGE"]
   ],
   "groups": [],
   "config": {},
