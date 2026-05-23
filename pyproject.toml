@@ -16,6 +16,6 @@ dependencies = [
 Repository = "https://github.com/o-ankomochi-o/comfyui-ccip-judge"
 
 [tool.comfy]
-PublisherId = "o-ankomochi-o"
+PublisherId = "ankomochi"
 DisplayName = "CCIP Judge"
 Icon = ""
