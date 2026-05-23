@@ -1,6 +1,6 @@
 {
   "last_node_id": 10,
-  "last_link_id": 22,
+  "last_link_id": 38,
   "nodes": [
     {
       "id": 1,
@@ -12,7 +12,7 @@
       "mode": 0,
       "inputs": [],
       "outputs": [
-        {"name": "IMAGE", "type": "IMAGE", "links": [1, 2, 3, 4]}
+        {"name": "IMAGE", "type": "IMAGE", "links": [1, 2, 3, 4, 33]}
       ],
       "title": "Generated batch loader",
       "properties": {"Node name for S&R": "LoadImagesFromDir //Inspire"},
@@ -28,7 +28,7 @@
         {"name": "reference_image", "type": "IMAGE", "link": null, "shape": 7}
       ],
       "outputs": [
-        {"name": "distance", "type": "FLOAT", "links": [10]},
+        {"name": "distance", "type": "FLOAT", "links": [10, 30, 35]},
         {"name": "pass_mask", "type": "BOOLEAN", "links": null},
         {"name": "info", "type": "STRING", "links": null}
       ],
@@ -45,7 +45,7 @@
         {"name": "reference_image", "type": "IMAGE", "link": null, "shape": 7}
       ],
       "outputs": [
-        {"name": "oks", "type": "FLOAT", "links": [11]},
+        {"name": "oks", "type": "FLOAT", "links": [11, 31, 36]},
         {"name": "pass_mask", "type": "BOOLEAN", "links": null},
         {"name": "info", "type": "STRING", "links": null}
       ],
@@ -62,7 +62,7 @@
         {"name": "reference_image", "type": "IMAGE", "link": null, "shape": 7}
       ],
       "outputs": [
-        {"name": "angle_distance", "type": "FLOAT", "links": [12]},
+        {"name": "angle_distance", "type": "FLOAT", "links": [12, 32, 37]},
         {"name": "pass_mask", "type": "BOOLEAN", "links": null},
         {"name": "info", "type": "STRING", "links": null}
       ],
@@ -80,7 +80,7 @@
         {"name": "angle_distance", "type": "FLOAT", "link": 12}
       ],
       "outputs": [
-        {"name": "pass_mask", "type": "BOOLEAN", "links": [13]},
+        {"name": "pass_mask", "type": "BOOLEAN", "links": [13, 34]},
         {"name": "info", "type": "STRING", "links": null}
       ],
       "properties": {"Node name for S&R": "CCIPJudge_ThreeStageFilter"},
@@ -93,7 +93,10 @@
       "size": [380, 220],
       "inputs": [
         {"name": "image", "type": "IMAGE", "link": 4},
-        {"name": "pass_mask", "type": "BOOLEAN", "link": 13}
+        {"name": "pass_mask", "type": "BOOLEAN", "link": 13},
+        {"name": "ccip_distance", "type": "FLOAT", "link": 30, "shape": 7},
+        {"name": "oks", "type": "FLOAT", "link": 31, "shape": 7},
+        {"name": "angle_distance", "type": "FLOAT", "link": 32, "shape": 7}
       ],
       "outputs": [
         {"name": "liked", "type": "IMAGE", "links": [20]},
@@ -106,7 +109,11 @@
         "./ipadapter/ipa_disliked",
         "liked",
         "disliked",
-        true
+        true,
+        "./ipadapter",
+        0.213,
+        0.5,
+        0.5
       ]
     },
     {
@@ -132,6 +139,37 @@
       "outputs": [],
       "title": "Preview disliked",
       "properties": {"Node name for S&R": "PreviewImage"}
+    },
+    {
+      "id": 9,
+      "type": "CCIPJudge_ScoreOverlay",
+      "pos": [1200, 720],
+      "size": [380, 200],
+      "inputs": [
+        {"name": "image", "type": "IMAGE", "link": 33},
+        {"name": "pass_mask", "type": "BOOLEAN", "link": 34},
+        {"name": "ccip_distance", "type": "FLOAT", "link": 35, "shape": 7},
+        {"name": "oks", "type": "FLOAT", "link": 36, "shape": 7},
+        {"name": "angle_distance", "type": "FLOAT", "link": 37, "shape": 7}
+      ],
+      "outputs": [
+        {"name": "annotated", "type": "IMAGE", "links": [38]}
+      ],
+      "title": "Score Overlay",
+      "properties": {"Node name for S&R": "CCIPJudge_ScoreOverlay"},
+      "widgets_values": [0.213, 0.5, 0.5]
+    },
+    {
+      "id": 10,
+      "type": "PreviewImage",
+      "pos": [1650, 720],
+      "size": [380, 380],
+      "inputs": [
+        {"name": "images", "type": "IMAGE", "link": 38}
+      ],
+      "outputs": [],
+      "title": "Preview (per-image judge)",
+      "properties": {"Node name for S&R": "PreviewImage"}
     }
   ],
   "links": [
@@ -144,7 +182,16 @@
     [12, 4, 0, 5, 2, "FLOAT"],
     [13, 5, 0, 6, 1, "BOOLEAN"],
     [20, 6, 0, 7, 0, "IMAGE"],
-    [21, 6, 1, 8, 0, "IMAGE"]
+    [21, 6, 1, 8, 0, "IMAGE"],
+    [30, 2, 0, 6, 2, "FLOAT"],
+    [31, 3, 0, 6, 3, "FLOAT"],
+    [32, 4, 0, 6, 4, "FLOAT"],
+    [33, 1, 0, 9, 0, "IMAGE"],
+    [34, 5, 0, 9, 1, "BOOLEAN"],
+    [35, 2, 0, 9, 2, "FLOAT"],
+    [36, 3, 0, 9, 3, "FLOAT"],
+    [37, 4, 0, 9, 4, "FLOAT"],
+    [38, 9, 0, 10, 0, "IMAGE"]
   ],
   "groups": [],
   "config": {},

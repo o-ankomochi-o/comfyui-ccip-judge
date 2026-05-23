@@ -11,6 +11,7 @@ from .ccip_judge.oks_score import OKSScore
 from .ccip_judge.angle_score import AngleScore
 from .ccip_judge.three_stage_filter import ThreeStageFilter
 from .ccip_judge.image_router import ImageRouter
+from .ccip_judge.score_overlay import ScoreOverlay
 
 NODE_CLASS_MAPPINGS = {
     "CCIPJudge_CCIPScore": CCIPScore,
@@ -18,6 +19,7 @@ NODE_CLASS_MAPPINGS = {
     "CCIPJudge_AngleScore": AngleScore,
     "CCIPJudge_ThreeStageFilter": ThreeStageFilter,
     "CCIPJudge_ImageRouter": ImageRouter,
+    "CCIPJudge_ScoreOverlay": ScoreOverlay,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -26,6 +28,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "CCIPJudge_AngleScore": "Angle Score",
     "CCIPJudge_ThreeStageFilter": "Three-Stage Filter",
     "CCIPJudge_ImageRouter": "Image Router (liked/disliked)",
+    "CCIPJudge_ScoreOverlay": "Score Overlay (preview)",
 }
 
 WEB_DIRECTORY = None
