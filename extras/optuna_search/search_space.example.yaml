@@ -1,0 +1,76 @@
+# Optuna search space configuration for CCIP Judge tuning.
+# Copy to search_space.yaml and edit node_id values to match your workflow.
+
+comfyui_url: http://127.0.0.1:8188
+
+# API-format workflow JSON. Export from ComfyUI via File menu:
+# "Save (API Format)" — NOT the regular "Save".
+workflow_template: ./workflow_api.json
+
+# Directory where ImageRouter writes scores_<ts>.csv.
+csv_dir: /home/spirito/ComfyUI/ComfyUI/ipadapter
+
+# Optuna study identification (resume-able via --resume).
+study_name: ccip_judge_tuning
+storage: sqlite:///ccip_judge_tuning.db
+
+# Trial budget.
+n_trials: 50
+
+# Sampler: tpe (Bayesian, recommended) / grid (XY-Plot equivalent) / random.
+sampler: tpe
+
+# Objective metric direction and formula.
+direction: maximize
+# objective: liked_rate (default), liked_count, mean_ccip, mean_oks, mean_angle, composite.
+objective: liked_rate
+
+# Timeouts (seconds).
+poll_interval_sec: 2.0
+trial_timeout_sec: 600
+
+# === Parameter search space ===
+# node_id   : the node's id in the API-format workflow JSON (string).
+# input_name: name of the input field inside that node's "inputs" dict.
+# type      : float | int | categorical.
+# low, high : range for float/int. step is optional.
+# choices   : list for categorical.
+# grid      : (optional) explicit grid points when sampler=grid.
+parameters:
+
+  ipa_weight:
+    node_id: "424"            # IPAdapterAdvanced
+    input_name: weight
+    type: float
+    low: 0.3
+    high: 1.0
+    grid: [0.4, 0.6, 0.8]
+
+  ipa_end_at:
+    node_id: "424"            # IPAdapterAdvanced
+    input_name: end_at
+    type: float
+    low: 0.4
+    high: 1.0
+    grid: [0.5, 0.7, 1.0]
+
+  ipa_weight_type:
+    node_id: "424"            # IPAdapterAdvanced
+    input_name: weight_type
+    type: categorical
+    choices: [linear, composition, "style transfer"]
+
+  # Uncomment to also tune LoRA / sampler params.
+  # lora_strength:
+  #   node_id: "184"            # Power Lora Loader
+  #   input_name: lora_strength
+  #   type: float
+  #   low: 0.7
+  #   high: 1.0
+  #
+  # cfg:
+  #   node_id: "197"            # KSampler
+  #   input_name: cfg
+  #   type: float
+  #   low: 5.0
+  #   high: 8.0

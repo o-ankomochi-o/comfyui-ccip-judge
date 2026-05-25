@@ -17,3 +17,8 @@ Thumbs.db
 *.onnx
 build/
 dist/
+
+# comfy-cli publish artifacts
+node.zip
+*.db
+*_trials.csv
