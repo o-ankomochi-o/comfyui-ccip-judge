@@ -108,7 +108,18 @@ def apply_params(workflow: Dict[str, Any], trial: optuna.Trial,
 
         if node_id not in wf:
             raise KeyError(f"node_id '{node_id}' not in workflow (parameter '{name}')")
-        wf[node_id]["inputs"][input_name] = value
+        # Support dotted paths so nested dict inputs (e.g. rgthree Power Lora
+        # Loader's "lora_1.strength") can be tuned without a separate field.
+        parts = input_name.split(".")
+        target = wf[node_id]["inputs"]
+        for p in parts[:-1]:
+            if p not in target:
+                raise KeyError(
+                    f"intermediate key '{p}' missing in node '{node_id}' "
+                    f"(parameter '{name}', path '{input_name}')"
+                )
+            target = target[p]
+        target[parts[-1]] = value
     return wf
 
 
