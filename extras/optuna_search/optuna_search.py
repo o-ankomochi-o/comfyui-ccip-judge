@@ -26,6 +26,7 @@ import csv
 import glob
 import json
 import os
+import random
 import sys
 import time
 import uuid
@@ -121,6 +122,29 @@ def apply_params(workflow: Dict[str, Any], trial: optuna.Trial,
             target = target[p]
         target[parts[-1]] = value
     return wf
+
+
+def randomize_seeds(workflow: Dict[str, Any]) -> None:
+    """Give every KSampler a fresh seed each trial.
+
+    ComfyUI caches node outputs and reuses them when a node's inputs are
+    byte-for-byte identical to a previous run. Optuna's first trial is
+    deterministic (fixed sampler seed), so re-running a study replays the
+    exact same prompt, the judge / ImageRouter nodes are served from cache,
+    and no new scores_*.csv is written -- which makes the objective fail with
+    'no scores_*.csv found'. Bumping the sampler seed keeps every prompt
+    unique so the full graph (including the CSV write) always executes.
+    """
+    for node in workflow.values():
+        if not isinstance(node, dict):
+            continue
+        ctype = node.get("class_type", "")
+        if not isinstance(ctype, str) or not ctype.startswith("KSampler"):
+            continue
+        inputs = node.get("inputs", {})
+        for key in ("noise_seed", "seed"):
+            if key in inputs:
+                inputs[key] = random.randint(0, 2**31 - 1)
 
 
 def queue_prompt(comfyui_url: str, prompt: Dict[str, Any], client_id: str) -> str:
@@ -269,6 +293,7 @@ def main():
 
     def objective_fn(trial: optuna.Trial) -> float:
         wf = apply_params(workflow_template, trial, cfg["parameters"])
+        randomize_seeds(wf)
         start_ts = time.time()
         prompt_id = queue_prompt(comfyui_url, wf, client_id)
         wait_for_prompt(comfyui_url, prompt_id,
