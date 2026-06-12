@@ -132,25 +132,27 @@ def apply_params(workflow: Dict[str, Any], trial: optuna.Trial,
 
 
 def randomize_seeds(workflow: Dict[str, Any]) -> None:
-    """Give every KSampler a fresh seed each trial.
+    """Give every seed widget a fresh value each trial.
 
     ComfyUI caches node outputs and reuses them when a node's inputs are
     byte-for-byte identical to a previous run. Optuna's first trial is
     deterministic (fixed sampler seed), so re-running a study replays the
     exact same prompt, the judge / ImageRouter nodes are served from cache,
     and no new scores_*.csv is written -- which makes the objective fail with
-    'no scores_*.csv found'. Bumping the sampler seed keeps every prompt
-    unique so the full graph (including the CSV write) always executes.
+    'no scores_*.csv found'. Bumping the seeds keeps every prompt unique so
+    the full graph (including the CSV write) always executes.
+
+    Matches ANY node carrying an int-valued seed/noise_seed widget (KSampler,
+    RandomNoise, SamplerCustom variants, ...); linked inputs are left alone.
     """
     for node in workflow.values():
         if not isinstance(node, dict):
             continue
-        ctype = node.get("class_type", "")
-        if not isinstance(ctype, str) or not ctype.startswith("KSampler"):
-            continue
         inputs = node.get("inputs", {})
+        if not isinstance(inputs, dict):
+            continue
         for key in ("noise_seed", "seed"):
-            if key in inputs:
+            if isinstance(inputs.get(key), int):
                 inputs[key] = random.randint(0, 2**31 - 1)
 
 
