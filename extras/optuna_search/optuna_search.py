@@ -73,6 +73,13 @@ def load_config(path: str) -> Dict[str, Any]:
     cfg.setdefault("objective", "liked_rate")
     cfg.setdefault("poll_interval_sec", 2.0)
     cfg.setdefault("trial_timeout_sec", 600)
+    # Multi-objective (Pareto) mode: optimize each metric independently.
+    cfg.setdefault("multi_objective", False)
+    if cfg["multi_objective"]:
+        cfg.setdefault("objectives", ["mean_ccip", "mean_oks", "mean_angle"])
+        cfg.setdefault("directions", ["minimize", "maximize", "minimize"])
+        if len(cfg["objectives"]) != len(cfg["directions"]):
+            raise ValueError("objectives and directions must have the same length")
     return cfg
 
 
@@ -196,7 +203,8 @@ def read_csv_rows(path: str) -> List[Dict[str, str]]:
         return list(csv.DictReader(f))
 
 
-def compute_objective(rows: List[Dict[str, str]], objective: str) -> float:
+def compute_objective(rows: List[Dict[str, str]], objective: str,
+                      weights: Dict[str, float] | None = None) -> float:
     if not rows:
         return float("nan")
 
@@ -229,18 +237,21 @@ def compute_objective(rows: List[Dict[str, str]], objective: str) -> float:
         vs = safe_float("angle")
         return sum(vs) / len(vs) if vs else float("nan")
     if objective == "composite":
+        w = weights or {}
         ccip = safe_float("ccip")
         oks = safe_float("oks")
         ang = safe_float("angle")
         score = 0.0
-        if ccip: score += -1.0 * (sum(ccip) / len(ccip))
-        if oks:  score += 1.0 * (sum(oks) / len(oks))
-        if ang:  score += -1.0 * (sum(ang) / len(ang))
+        if ccip: score += -float(w.get("ccip", 1.0)) * (sum(ccip) / len(ccip))
+        if oks:  score += float(w.get("oks", 1.0)) * (sum(oks) / len(oks))
+        if ang:  score += -float(w.get("angle", 1.0)) * (sum(ang) / len(ang))
         return score
     raise ValueError(f"unknown objective: {objective}")
 
 
 def build_sampler(name: str, parameters: Dict[str, Dict[str, Any]], seed: int = 42):
+    if name == "nsga2":
+        return optuna.samplers.NSGAIISampler(seed=seed)
     if name == "tpe":
         return optuna.samplers.TPESampler(seed=seed)
     if name == "random":
@@ -280,16 +291,27 @@ def main():
     study_name = args.study_name or cfg.get("study_name", "ccip_judge_tuning")
     storage = args.storage or cfg.get("storage") or f"sqlite:///{study_name}.db"
 
-    study = optuna.create_study(
-        direction=cfg["direction"],
-        sampler=sampler,
-        study_name=study_name,
-        storage=storage,
-        load_if_exists=args.resume,
-    )
-
-    print(f"== Optuna study '{study_name}' (storage={storage}, sampler={cfg['sampler']}) ==")
-    print(f"   direction={cfg['direction']}, objective={cfg['objective']}, n_trials={cfg['n_trials']}")
+    if cfg["multi_objective"]:
+        study = optuna.create_study(
+            directions=cfg["directions"],
+            sampler=sampler,
+            study_name=study_name,
+            storage=storage,
+            load_if_exists=args.resume,
+        )
+        print(f"== Optuna study '{study_name}' (storage={storage}, sampler={cfg['sampler']}) ==")
+        print(f"   multi-objective: {list(zip(cfg['objectives'], cfg['directions']))}, "
+              f"n_trials={cfg['n_trials']}")
+    else:
+        study = optuna.create_study(
+            direction=cfg["direction"],
+            sampler=sampler,
+            study_name=study_name,
+            storage=storage,
+            load_if_exists=args.resume,
+        )
+        print(f"== Optuna study '{study_name}' (storage={storage}, sampler={cfg['sampler']}) ==")
+        print(f"   direction={cfg['direction']}, objective={cfg['objective']}, n_trials={cfg['n_trials']}")
 
     def objective_fn(trial: optuna.Trial) -> float:
         wf = apply_params(workflow_template, trial, cfg["parameters"])
@@ -306,18 +328,24 @@ def main():
                 "Verify ImageRouter.csv_dir matches and that the workflow has all scores wired in."
             )
         rows = read_csv_rows(csv_path)
-        value = compute_objective(rows, cfg["objective"])
         trial.set_user_attr("csv_path", csv_path)
         trial.set_user_attr("n_rows", len(rows))
         trial.set_user_attr("liked", sum(1 for r in rows if r.get("verdict") == "LIKED"))
-        return value
+        if cfg["multi_objective"]:
+            return tuple(compute_objective(rows, name) for name in cfg["objectives"])
+        return compute_objective(rows, cfg["objective"], cfg.get("composite_weights"))
 
     study.optimize(objective_fn, n_trials=cfg["n_trials"], show_progress_bar=True)
 
     print()
     print("=" * 70)
-    print(f"Best objective: {study.best_value}")
-    print(f"Best params:    {study.best_params}")
+    if cfg["multi_objective"]:
+        print(f"Pareto front ({len(study.best_trials)} trials):")
+        for t in study.best_trials:
+            print(f"  trial {t.number}: values={t.values}, params={t.params}")
+    else:
+        print(f"Best objective: {study.best_value}")
+        print(f"Best params:    {study.best_params}")
     print("=" * 70)
 
     df = study.trials_dataframe(attrs=("number", "value", "params", "user_attrs", "state"))
