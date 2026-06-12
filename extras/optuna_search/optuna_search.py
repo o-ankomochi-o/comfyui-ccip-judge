@@ -162,6 +162,11 @@ def queue_prompt(comfyui_url: str, prompt: Dict[str, Any], client_id: str) -> st
                       timeout=30)
     r.raise_for_status()
     body = r.json()
+    # Partial validation: ComfyUI ignores outputs depending on invalid nodes
+    # and still reports success, which would silently skip the judge chain.
+    node_errors = body.get("node_errors") or {}
+    if node_errors:
+        raise RuntimeError(f"ComfyUI prompt validation errors: {node_errors}")
     if "prompt_id" not in body:
         raise RuntimeError(f"ComfyUI /prompt unexpected response: {body}")
     return body["prompt_id"]
