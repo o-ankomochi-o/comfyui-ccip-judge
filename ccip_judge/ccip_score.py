@@ -12,16 +12,17 @@ from typing import List
 import numpy as np
 
 from .common import comfy_image_to_pil_list, load_reference_images
+from .deps import require_imgutils_metrics
 
 
 DEFAULT_MODEL = "ccip-caformer_b36-24"
 
 
 def _ccip_extract_many(pil_images, model: str):
-    from imgutils.metrics import ccip_extract_feature
+    metrics = require_imgutils_metrics()
     feats = []
     for img in pil_images:
-        feats.append(ccip_extract_feature(img, model=model))
+        feats.append(metrics.ccip_extract_feature(img, model=model))
     return feats
 
 
@@ -63,13 +64,13 @@ class CCIPScore:
 
         ref_feats = _ccip_extract_many(ref_pils, model_name)
 
-        from imgutils.metrics import ccip_difference, ccip_extract_feature
+        metrics = require_imgutils_metrics()
 
         distances: List[float] = []
         passes: List[bool] = []
         for gen in gen_pils:
-            gf = ccip_extract_feature(gen, model=model_name)
-            dists = [ccip_difference(gf, rf, model=model_name) for rf in ref_feats]
+            gf = metrics.ccip_extract_feature(gen, model=model_name)
+            dists = [metrics.ccip_difference(gf, rf, model=model_name) for rf in ref_feats]
             mean = float(np.mean(dists))
             distances.append(mean)
             passes.append(mean < threshold)

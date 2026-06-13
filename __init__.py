@@ -6,6 +6,7 @@ LoRA evaluation pipeline, with downstream filter and router nodes
 for IP-Adapter feedback workflows.
 """
 
+from .ccip_judge.deps import imgutils_available, missing_imgutils_message
 from .ccip_judge.ccip_score import CCIPScore
 from .ccip_judge.oks_score import OKSScore
 from .ccip_judge.angle_score import AngleScore
@@ -32,5 +33,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 }
 
 WEB_DIRECTORY = None
+
+# Surface missing dependencies at startup instead of a bare
+# ModuleNotFoundError when the node first executes. Nodes still
+# register so existing workflows keep loading.
+if not imgutils_available():
+    print(f"\n[comfyui-ccip-judge] WARNING:\n{missing_imgutils_message()}\n")
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

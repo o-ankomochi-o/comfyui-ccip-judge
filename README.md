@@ -37,6 +37,56 @@ Requirements:
 - `huggingface_hub` (downloads `yzd-v/DWPose` ONNX weights on first run)
 - `opencv-python`, `numpy`, `Pillow`
 
+## Known issues
+
+### `pip install dghs-imgutils` fails on Python 3.13
+
+Recent ComfyUI Windows portable builds ship an embedded **Python 3.13**.
+On 3.13, installing `dghs-imgutils` fails with a numpy source-build error
+(`ERROR: Unknown compiler(s) ...`). This is an upstream limitation, not
+something this repo's `requirements.txt` can fix:
+
+- `dghs-imgutils` (all versions, including the latest) pins `numpy<2`
+  ([deepghs/imgutils#170](https://github.com/deepghs/imgutils/issues/170)).
+- The newest `numpy<2` release (1.26.4) predates Python 3.13 and has no
+  3.13 wheels, so pip falls back to building numpy from source, which
+  fails on machines without a C/C++ compiler.
+
+When `imgutils` is missing, only **CCIP Score** is affected; the other
+nodes still work. A warning with instructions is printed at ComfyUI
+startup, and CCIP Score raises the same instructions if executed.
+
+**Options:**
+
+1. **Recommended:** run ComfyUI on **Python 3.10–3.12** (a portable build
+   that ships 3.12, or your own venv). `pip install -r requirements.txt`
+   then works as-is.
+
+2. **Workaround on Python 3.13 (unverified):** install `dghs-imgutils`
+   without its dependency pins, then install its runtime dependencies
+   with a current numpy. The `numpy<2` pin is conservative; the CCIP code
+   path is expected to work on numpy 2.x (upstream is already discussing
+   relaxing the pin in
+   [deepghs/imgutils#175](https://github.com/deepghs/imgutils/issues/175)):
+
+   ```bash
+   python -m pip install dghs-imgutils --no-deps
+   python -m pip install numpy pillow opencv-contrib-python onnxruntime ^
+       huggingface-hub hbutils hfutils scikit-learn scipy pandas tqdm ^
+       deprecation filelock
+   ```
+
+   (On ComfyUI Windows portable, replace `python` with
+   `python_embeded\python.exe`. If you upgraded setuptools while
+   debugging, restore it with `pip install "setuptools<82"` to satisfy
+   torch.) If a `ModuleNotFoundError` for another package appears at
+   runtime, `pip install` that package the same way. Please report back
+   whether this works for you.
+
+3. Once upstream relaxes the numpy pin, a normal
+   `pip install dghs-imgutils` will work on 3.13 and this section will be
+   removed.
+
 ## Typical workflow
 
 ```
