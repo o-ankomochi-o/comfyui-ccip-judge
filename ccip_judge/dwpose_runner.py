@@ -128,7 +128,11 @@ def _detect_person(image_bgr: np.ndarray, det_session) -> Tuple[np.ndarray, np.n
     person_scores = scores[:, 0]
     keep = person_scores > 0.3
     if not keep.any():
-        return np.array([[0, 0, w, h]], dtype=np.float32), np.array([1.0], dtype=np.float32)
+        # No detection. Callers decide what that means: the fail-explicit
+        # path treats it as a real failure, the legacy A/B path substitutes
+        # a full-image bbox (the old silent-fallback behaviour).
+        return (np.zeros((0, 4), dtype=np.float32),
+                np.zeros((0,), dtype=np.float32))
     return boxes_xyxy[keep], person_scores[keep]
 
 
@@ -209,13 +213,15 @@ def _pose_for_bbox(img_bgr: np.ndarray, bbox: np.ndarray) -> Optional[dict]:
 def extract_pose(pil_image: Image.Image, use_anime_detector: bool = True) -> Optional[dict]:
     """Run person detection + DWPose keypoints on a PIL image.
 
-    The legacy path (photo-trained YOLOX, full-image fallback) runs first so
-    images it already handles keep byte-identical results. Only when its
-    keypoint confidences collapse (< _RETRY_BELOW of 17 above 0.3 — the
-    line-art failure signature that produced OKS=0.0 / Angle=1.0 mass
-    dislikes) is the anime-trained detector (dghs-imgutils) tried, and the
-    result with more confident keypoints wins. use_anime_detector=False
-    reproduces the legacy behaviour exactly (A/B validation).
+    The legacy path (photo-trained YOLOX) runs first so images it already
+    handles keep byte-identical results. Only when its keypoint confidences
+    collapse (< _RETRY_BELOW of 17 above 0.3 — the line-art failure signature
+    that produced OKS=0.0 / Angle=1.0 mass dislikes) is the anime-trained
+    detector (dghs-imgutils) tried, and the result with more confident
+    keypoints wins. When neither detector finds a person the function returns
+    None (fail-explicit) instead of silently estimating pose on a full-image
+    bbox; use_anime_detector=False reproduces the old behaviour exactly,
+    including that fallback (A/B validation).
 
     Returns dict {'keypoints': (133, 2), 'scores': (133,), 'bbox': (4,), 'image_shape': (h, w)}
     or None on failure.
@@ -226,6 +232,9 @@ def extract_pose(pil_image: Image.Image, use_anime_detector: bool = True) -> Opt
     h, w = img_bgr.shape[:2]
 
     boxes, _ = _detect_person(img_bgr, _get_det_session())
+    if len(boxes) == 0 and not use_anime_detector:
+        # Legacy A/B mode reproduces the old silent full-image fallback.
+        boxes = np.array([[0, 0, w, h]], dtype=np.float32)
     legacy = None
     if len(boxes) > 0:
         areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])

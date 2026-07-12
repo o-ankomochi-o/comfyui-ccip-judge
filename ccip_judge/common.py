@@ -84,3 +84,24 @@ def pil_to_cv2_bgr(img: Image.Image) -> np.ndarray:
     """PIL RGB -> OpenCV BGR ndarray."""
     arr = np.asarray(img.convert("RGB"))
     return arr[:, :, ::-1].copy()
+
+
+def detect_character_present(img: Image.Image) -> Optional[bool]:
+    """Anime-character presence check for the fail-explicit contract.
+
+    Person detector first; face detector as backup because bust/face-only
+    shots can slip past the person detector. Returns None (= check skipped,
+    score normally) when imgutils.detect is unavailable or the detectors
+    themselves error — only a clean "both detectors ran and found nothing"
+    returns False, so images are never mass-failed by an environment issue.
+    """
+    try:
+        from imgutils.detect import detect_person, detect_faces
+    except ImportError:
+        return None
+    try:
+        if detect_person(img):
+            return True
+        return bool(detect_faces(img))
+    except Exception:
+        return None

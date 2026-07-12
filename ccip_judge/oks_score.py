@@ -3,10 +3,18 @@
 Computes Object Keypoint Similarity between each generated image and
 the reference pool. With multiple references the per-image score is
 averaged (as requested by the user).
+
+Fail-explicit contract: when pose extraction fails for a generated
+image the score is NaN (not a configurable stand-in value), so the
+failure survives the pipeline — NaN compares False against any
+threshold (always disliked) and ImageRouter writes it as an empty CSV
+cell plus a detect_failed flag. The fail_score widget is kept only so
+existing workflow JSONs keep loading; its value is ignored.
 """
 
 from __future__ import annotations
 
+import math
 from typing import List
 
 import numpy as np
@@ -79,6 +87,8 @@ class OKSScore:
                 "image": ("IMAGE",),
                 "threshold": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
                 "reference_folder": ("STRING", {"default": "", "multiline": False}),
+                # Deprecated: failures now always score NaN. Kept so existing
+                # workflow JSONs that set this widget keep loading.
                 "fail_score": ("FLOAT", {"default": 0.0, "min": -1.0, "max": 1.0, "step": 0.01}),
             },
             "optional": {
@@ -110,25 +120,27 @@ class OKSScore:
 
         scores: List[float] = []
         passes: List[bool] = []
+        n_detect_fail = 0
         for gen in gen_pils:
             gp = extract_pose(gen)
-            if gp is None:
-                scores.append(float(fail_score))
-                passes.append(False)
-                continue
-            per_ref = [compute_oks(rp, gp) for rp in ref_poses]
-            per_ref = [v for v in per_ref if v is not None]
+            per_ref = []
+            if gp is not None:
+                per_ref = [v for v in (compute_oks(rp, gp) for rp in ref_poses)
+                           if v is not None]
             if not per_ref:
-                scores.append(float(fail_score))
+                scores.append(float("nan"))
                 passes.append(False)
+                n_detect_fail += 1
                 continue
             mean_oks = float(np.mean(per_ref))
             scores.append(mean_oks)
             passes.append(mean_oks > threshold)
 
+        valid = [s for s in scores if not math.isnan(s)]
         info = (
             f"OKS | refs={len(ref_poses)} | n={len(scores)} | "
-            f"mean={float(np.mean(scores)) if scores else 0:.4f} | "
-            f"pass={sum(passes)}/{len(passes)} (>{threshold})"
+            f"mean={float(np.mean(valid)) if valid else float('nan'):.4f} | "
+            f"pass={sum(passes)}/{len(passes)} (>{threshold}) | "
+            f"detect_fail={n_detect_fail}"
         )
         return (scores, passes, info)

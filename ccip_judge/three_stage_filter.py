@@ -8,6 +8,7 @@ configured without trusting the upstream Score nodes' own widgets.
 
 from __future__ import annotations
 
+import math
 from typing import List
 
 import numpy as np
@@ -51,10 +52,15 @@ class ThreeStageFilter:
         n_ccip_ok = 0
         n_oks_ok = 0
         n_ang_ok = 0
+        n_detect_fail = 0
         for i in range(n):
             c = float(ccip_distance[i])
             k = float(oks[i])
             a = float(angle_distance[i])
+            # NaN (detection failure) compares False against any threshold,
+            # so failed images can never pass regardless of the settings.
+            if math.isnan(c) or math.isnan(k) or math.isnan(a):
+                n_detect_fail += 1
             c_ok = c < ccip_t
             k_ok = k > oks_t
             a_ok = a < ang_t
@@ -66,6 +72,7 @@ class ThreeStageFilter:
         passed = int(np.sum(passes))
         info = (
             f"filter n={n} pass={passed}/{n} "
-            f"(CCIP<{ccip_t}:{n_ccip_ok}, OKS>{oks_t}:{n_oks_ok}, Angle<{ang_t}:{n_ang_ok})"
+            f"(CCIP<{ccip_t}:{n_ccip_ok}, OKS>{oks_t}:{n_oks_ok}, Angle<{ang_t}:{n_ang_ok}, "
+            f"detect_fail:{n_detect_fail})"
         )
         return (passes, info)

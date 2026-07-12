@@ -3,15 +3,24 @@
 Computes the mean CCIP distance between each image in the input batch
 and the reference image pool. Reference comes from either an IMAGE
 (batch) input or a folder path.
+
+Fail-explicit contract: CCIP itself has no detection step and will
+happily score a character-less image, so a presence check (anime person
+detector, face detector as backup) runs first. When both detectors find
+nothing the image gets distance=NaN and pass=False — NaN compares False
+against any threshold, so downstream filters can never turn a detection
+failure into a pass. ImageRouter converts the NaN into an empty CSV cell
+plus a detect_failed flag.
 """
 
 from __future__ import annotations
 
+import math
 from typing import List
 
 import numpy as np
 
-from .common import comfy_image_to_pil_list, load_reference_images
+from .common import comfy_image_to_pil_list, detect_character_present, load_reference_images
 from .deps import require_imgutils_metrics
 
 
@@ -68,16 +77,30 @@ class CCIPScore:
 
         distances: List[float] = []
         passes: List[bool] = []
+        n_detect_fail = 0
+        detect_check_ran = False
         for gen in gen_pils:
+            present = detect_character_present(gen)
+            if present is not None:
+                detect_check_ran = True
+            if present is False:
+                distances.append(float("nan"))
+                passes.append(False)
+                n_detect_fail += 1
+                continue
             gf = metrics.ccip_extract_feature(gen, model=model_name)
             dists = [metrics.ccip_difference(gf, rf, model=model_name) for rf in ref_feats]
             mean = float(np.mean(dists))
             distances.append(mean)
             passes.append(mean < threshold)
 
+        valid = [d for d in distances if not math.isnan(d)]
         info = (
             f"CCIP model={model_name} | refs={len(ref_pils)} | "
-            f"n={len(distances)} | mean={float(np.mean(distances)):.4f} | "
-            f"pass={sum(passes)}/{len(passes)} (<{threshold})"
+            f"n={len(distances)} | mean={float(np.mean(valid)) if valid else float('nan'):.4f} | "
+            f"pass={sum(passes)}/{len(passes)} (<{threshold}) | "
+            f"detect_fail={n_detect_fail}"
         )
+        if not detect_check_ran:
+            info += " (presence check unavailable)"
         return (distances, passes, info)

@@ -25,6 +25,7 @@ import copy
 import csv
 import glob
 import json
+import math
 import os
 import random
 import sys
@@ -218,16 +219,29 @@ def compute_objective(rows: List[Dict[str, str]], objective: str,
     n = len(rows)
     n_liked = sum(1 for r in rows if r.get("verdict") == "LIKED")
 
+    # Detection failures appear in the CSV as an empty score cell plus a
+    # detect_failed tag ("pose" and/or "ccip"). For mean_* objectives they
+    # count as the worst score — same effect as the old fail_score values —
+    # so configs that produce undetectable images keep getting penalized
+    # instead of having their failures silently dropped from the average.
+    fail_worst = {"ccip": 1.0, "oks": 0.0, "angle": 1.0}
+    fail_tag = {"ccip": "ccip", "oks": "pose", "angle": "pose"}
+
     def safe_float(key, default=None):
         vals = []
         for r in rows:
             v = r.get(key, "")
+            failed = fail_tag[key] in (r.get("detect_failed") or "")
             if v == "" or v is None:
+                if failed:
+                    vals.append(fail_worst[key])
                 continue
             try:
-                vals.append(float(v))
+                f = float(v)
             except ValueError:
                 continue
+            # Legacy safety net: a raw NaN in the CSV also means failure.
+            vals.append(fail_worst[key] if math.isnan(f) else f)
         return vals
 
     if objective == "liked_rate":

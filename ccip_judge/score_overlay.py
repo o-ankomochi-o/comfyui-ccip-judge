@@ -8,6 +8,7 @@ inspect per-image judgement directly in the ComfyUI graph.
 
 from __future__ import annotations
 
+import math
 from typing import List, Optional
 
 from PIL import Image, ImageDraw, ImageFont
@@ -118,16 +119,25 @@ class ScoreOverlay:
             parts = [f"idx={i:02d}"]
             if ccip_list and i < len(ccip_list):
                 v = ccip_list[i]
-                tag = "OK" if v < ccip_t else "NG"
-                parts.append(f"CCIP={v:.3f}[{tag}]")
+                if math.isnan(v):
+                    parts.append("CCIP=FAIL")
+                else:
+                    tag = "OK" if v < ccip_t else "NG"
+                    parts.append(f"CCIP={v:.3f}[{tag}]")
             if oks_list and i < len(oks_list):
                 v = oks_list[i]
-                tag = "OK" if v > oks_t else "NG"
-                parts.append(f"OKS={v:.3f}[{tag}]")
+                if math.isnan(v):
+                    parts.append("OKS=FAIL")
+                else:
+                    tag = "OK" if v > oks_t else "NG"
+                    parts.append(f"OKS={v:.3f}[{tag}]")
             if ang_list and i < len(ang_list):
                 v = ang_list[i]
-                tag = "OK" if v < ang_t else "NG"
-                parts.append(f"Angle={v:.3f}[{tag}]")
+                if math.isnan(v):
+                    parts.append("Angle=FAIL")
+                else:
+                    tag = "OK" if v < ang_t else "NG"
+                    parts.append(f"Angle={v:.3f}[{tag}]")
             parts.append(f"-> {verdict}")
             label = "  ".join(parts)
             annotated.append(_draw_caption(pil_all[i], label, mask[i]))

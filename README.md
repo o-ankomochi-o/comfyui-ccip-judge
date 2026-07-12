@@ -114,6 +114,30 @@ See `examples/image_judge_minimal.json` for a minimal ComfyUI workflow.
 The original LoRA evaluation report used CCIP `ccip-caformer_b36-24`
 (F1=0.94) with the default threshold 0.213.
 
+### Detection failures (fail-explicit contract)
+
+When a generated image's character cannot be detected, the affected
+score is **NaN** instead of a substitute value:
+
+- OKS / Angle: pose extraction failed (no person found, or fewer than
+  3 confident keypoints in common with every reference).
+- CCIP: neither the anime person detector nor the anime face detector
+  found a character (CCIP itself has no detection step, so this
+  presence check guards against confidently scoring an empty image).
+
+NaN compares false against any threshold, so a detection failure can
+never pass ThreeStageFilter regardless of settings. ImageRouter writes
+the failure to the CSV as an **empty score cell** plus a
+`detect_failed` column (`pose`, `ccip`, or `pose+ccip`), ScoreOverlay
+renders it as `FAIL`, and the bundled Optuna driver counts failures as
+the worst score (OKS 0.0 / Angle 1.0 / CCIP 1.0) in `mean_*` and
+`composite` objectives — same penalty as the legacy fail_score
+behaviour. The `fail_score` widgets on OKS / Angle are deprecated and
+ignored; they remain only so existing workflow JSONs keep loading.
+
+Reference-side failures are unchanged: if every reference image fails
+extraction the node raises instead of judging blind.
+
 ## Reference aggregation
 
 With multiple reference images, per-generated-image scores are averaged

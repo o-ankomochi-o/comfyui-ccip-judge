@@ -14,6 +14,7 @@ node also writes a CSV report next to the saved images.
 from __future__ import annotations
 
 import csv
+import math
 import os
 import time
 from typing import List, Optional
@@ -142,22 +143,33 @@ class ImageRouter:
                 w = csv.writer(fp)
                 w.writerow([
                     "index", "ccip", "oks", "angle",
-                    "ccip_ok", "oks_ok", "angle_ok", "verdict",
+                    "ccip_ok", "oks_ok", "angle_ok", "verdict", "detect_failed",
                 ])
                 for i in range(n):
                     c = ccip_list[i] if ccip_list and i < len(ccip_list) else ""
                     k = oks_list[i] if oks_list and i < len(oks_list) else ""
                     a = ang_list[i] if ang_list and i < len(ang_list) else ""
-                    c_ok = "" if c == "" else c < ccip_t
-                    k_ok = "" if k == "" else k > oks_t
-                    a_ok = "" if a == "" else a < ang_t
+                    # NaN is the fail-explicit marker from the score nodes:
+                    # written as an empty cell + a detect_failed tag so the
+                    # failure is distinguishable from a genuinely low score.
+                    c_fail = c != "" and math.isnan(c)
+                    k_fail = k != "" and math.isnan(k)
+                    a_fail = a != "" and math.isnan(a)
+                    fails = []
+                    if k_fail or a_fail:
+                        fails.append("pose")
+                    if c_fail:
+                        fails.append("ccip")
+                    c_ok = "" if c == "" or c_fail else c < ccip_t
+                    k_ok = "" if k == "" or k_fail else k > oks_t
+                    a_ok = "" if a == "" or a_fail else a < ang_t
                     verdict = "LIKED" if mask[i] else "disliked"
                     w.writerow([
                         i,
-                        f"{c:.4f}" if c != "" else "",
-                        f"{k:.4f}" if k != "" else "",
-                        f"{a:.4f}" if a != "" else "",
-                        c_ok, k_ok, a_ok, verdict,
+                        f"{c:.4f}" if c != "" and not c_fail else "",
+                        f"{k:.4f}" if k != "" and not k_fail else "",
+                        f"{a:.4f}" if a != "" and not a_fail else "",
+                        c_ok, k_ok, a_ok, verdict, "+".join(fails),
                     ])
 
         liked_image = pil_list_to_comfy_image(liked_pils)

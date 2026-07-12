@@ -4,10 +4,16 @@ Builds 4 angle-related features from DWPose keypoints
 (face_shoulder_ratio, shoulder_tilt, torso_length_ratio, face_compression)
 and returns the RMS distance to the reference features. With multiple
 references the per-image distance is averaged.
+
+Fail-explicit contract: extraction failure scores NaN (always fails any
+threshold comparison, surfaces as an empty CSV cell + detect_failed flag
+via ImageRouter). The fail_score widget is kept only for workflow-JSON
+compatibility; its value is ignored.
 """
 
 from __future__ import annotations
 
+import math
 from typing import List, Optional
 
 import numpy as np
@@ -113,6 +119,8 @@ class AngleScore:
                 "image": ("IMAGE",),
                 "threshold": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 5.0, "step": 0.01}),
                 "reference_folder": ("STRING", {"default": "", "multiline": False}),
+                # Deprecated: failures now always score NaN. Kept so existing
+                # workflow JSONs that set this widget keep loading.
                 "fail_score": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 5.0, "step": 0.01}),
             },
             "optional": {
@@ -148,26 +156,28 @@ class AngleScore:
 
         scores: List[float] = []
         passes: List[bool] = []
+        n_detect_fail = 0
         for gen in gen_pils:
             gp = extract_pose(gen)
             gf = compute_angle_features(gp) if gp is not None else None
-            if gf is None:
-                scores.append(float(fail_score))
-                passes.append(False)
-                continue
-            per_ref = [angle_distance(rf, gf) for rf in ref_feats]
-            per_ref = [v for v in per_ref if v is not None]
+            per_ref = []
+            if gf is not None:
+                per_ref = [v for v in (angle_distance(rf, gf) for rf in ref_feats)
+                           if v is not None]
             if not per_ref:
-                scores.append(float(fail_score))
+                scores.append(float("nan"))
                 passes.append(False)
+                n_detect_fail += 1
                 continue
             mean_d = float(np.mean(per_ref))
             scores.append(mean_d)
             passes.append(mean_d < threshold)
 
+        valid = [s for s in scores if not math.isnan(s)]
         info = (
             f"Angle | refs={len(ref_feats)} | n={len(scores)} | "
-            f"mean={float(np.mean(scores)) if scores else 0:.4f} | "
-            f"pass={sum(passes)}/{len(passes)} (<{threshold})"
+            f"mean={float(np.mean(valid)) if valid else float('nan'):.4f} | "
+            f"pass={sum(passes)}/{len(passes)} (<{threshold}) | "
+            f"detect_fail={n_detect_fail}"
         )
         return (scores, passes, info)
