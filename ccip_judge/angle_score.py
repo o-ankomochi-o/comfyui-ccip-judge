@@ -23,22 +23,27 @@ from .dwpose_runner import extract_pose
 from .oks_score import _extract_first
 
 
-def compute_angle_features(pose_data, score_threshold: float = 0.3):
+def compute_angle_features(pose_data, score_threshold: float | None = None):
     if pose_data is None:
         return None
+    from .pose_target import SCORE_THRESHOLD, visible_joints
+
+    if score_threshold is None:
+        score_threshold = SCORE_THRESHOLD
     kp, sc = _extract_first(pose_data)
     kp, sc = kp[:17], sc[:17]
+    vis = visible_joints(kp, sc, pose_data, score_threshold)
     feats = {}
 
-    if sc[0] > score_threshold:
+    if vis[0]:
         face_y = kp[0][1]
-    elif sc[1] > score_threshold and sc[2] > score_threshold:
+    elif vis[1] and vis[2]:
         face_y = (kp[1][1] + kp[2][1]) / 2
     else:
         face_y = None
 
-    left_sh = sc[5] > score_threshold
-    right_sh = sc[6] > score_threshold
+    left_sh = bool(vis[5])
+    right_sh = bool(vis[6])
     if left_sh and right_sh:
         shoulder_y = (kp[5][1] + kp[6][1]) / 2
     elif left_sh:
@@ -48,9 +53,9 @@ def compute_angle_features(pose_data, score_threshold: float = 0.3):
     else:
         shoulder_y = None
 
-    if sc[1] > score_threshold and sc[2] > score_threshold:
+    if vis[1] and vis[2]:
         face_width = abs(kp[1][0] - kp[2][0])
-    elif sc[3] > score_threshold and sc[4] > score_threshold:
+    elif vis[3] and vis[4]:
         face_width = abs(kp[3][0] - kp[4][0]) * 0.7
     else:
         face_width = None
@@ -65,7 +70,7 @@ def compute_angle_features(pose_data, score_threshold: float = 0.3):
     else:
         feats["shoulder_tilt"] = None
 
-    hips_visible = sc[11] > score_threshold and sc[12] > score_threshold
+    hips_visible = bool(vis[11]) and bool(vis[12])
     if left_sh and right_sh and hips_visible:
         sh_y = (kp[5][1] + kp[6][1]) / 2
         hip_y = (kp[11][1] + kp[12][1]) / 2
@@ -77,7 +82,7 @@ def compute_angle_features(pose_data, score_threshold: float = 0.3):
     else:
         feats["torso_length_ratio"] = None
 
-    if sc[0] > score_threshold and sc[1] > score_threshold and sc[2] > score_threshold:
+    if vis[0] and vis[1] and vis[2]:
         eye_y = (kp[1][1] + kp[2][1]) / 2
         eye_w = abs(kp[1][0] - kp[2][0])
         if eye_w > 1:

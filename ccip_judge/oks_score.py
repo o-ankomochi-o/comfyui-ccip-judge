@@ -57,12 +57,19 @@ def _normalize(kp, bbox):
     return out
 
 
-def compute_oks_diag(ref_pose, gen_pose, score_threshold=0.3, min_common=3,
+def compute_oks_diag(ref_pose, gen_pose, score_threshold=None, min_common=3,
                      keypoint_set: str = ""):
     """(score | None, reason). Failure taxonomy (A6) instead of a bare None
     -- the 07-14 incident took a live debugging session because the only
     signal was `detect_failed=pose`. keypoint_set (A4) restricts evaluation
-    to the joints the task's framing can contain (portrait: face..wrists)."""
+    to the joints the task's framing can contain (portrait: face..wrists).
+    Visibility (which joints count as measured) comes from the calibrated
+    pose_target rules: default threshold + border-clamp suppression for
+    detected poses."""
+    from .pose_target import KEYPOINT_SETS, SCORE_THRESHOLD, visible_joints
+
+    if score_threshold is None:
+        score_threshold = SCORE_THRESHOLD
     if ref_pose is None:
         return None, "reference_invalid"
     if gen_pose is None:
@@ -72,12 +79,11 @@ def compute_oks_diag(ref_pose, gen_pose, score_threshold=0.3, min_common=3,
     ref_kp, ref_sc = ref_kp[:17], ref_sc[:17]
     gen_kp, gen_sc = gen_kp[:17], gen_sc[:17]
 
-    from .pose_target import KEYPOINT_SETS
     subset = np.zeros(17, dtype=bool)
     subset[list(KEYPOINT_SETS.get(keypoint_set, range(17)))] = True
 
-    ref_vis = (ref_sc > score_threshold) & subset
-    gen_vis = (gen_sc > score_threshold) & subset
+    ref_vis = visible_joints(ref_kp, ref_sc, ref_pose, score_threshold) & subset
+    gen_vis = visible_joints(gen_kp, gen_sc, gen_pose, score_threshold) & subset
     # P1-2 (07-14): the EXPECTED joints are the reference-visible ones.
     # A generated joint the detector cannot find scores 0 -- hiding wrong
     # joints must lower the score, never shrink the denominator.
@@ -116,7 +122,7 @@ def compute_oks_diag(ref_pose, gen_pose, score_threshold=0.3, min_common=3,
     return float(ks[common].sum() / expected.sum()), ""
 
 
-def compute_oks(ref_pose, gen_pose, score_threshold=0.3, min_common=3):
+def compute_oks(ref_pose, gen_pose, score_threshold=None, min_common=3):
     score, _reason = compute_oks_diag(ref_pose, gen_pose, score_threshold,
                                       min_common)
     return score
