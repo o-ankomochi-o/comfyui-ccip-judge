@@ -85,8 +85,19 @@ def compute_oks_diag(ref_pose, gen_pose, score_threshold=0.3, min_common=3,
             f"(ref={int(ref_vis.sum())},gen={int(gen_vis.sum())},"
             f"common={int(common.sum())},set={keypoint_set or 'all'})")
 
-    ref_norm = _normalize(ref_kp, _get_bbox(ref_pose))
-    gen_norm = _normalize(gen_kp, _get_bbox(gen_pose))
+    # P1 (07-14): the two poses live in DIFFERENT frames -- the authored
+    # reference spans its canvas, the generated bbox comes from person
+    # detection and may cover an unrelated crop. Normalize each side over
+    # the extent of the COMMON visible joints (uniform scale), which is
+    # frame- and crop-invariant by construction.
+    def _norm_common(kp):
+        pts = kp[common].astype(np.float32)
+        lo = pts.min(axis=0)
+        scale = max(float((pts.max(axis=0) - lo).max()), 1.0)
+        return (kp.astype(np.float32) - lo) / scale
+
+    ref_norm = _norm_common(ref_kp)
+    gen_norm = _norm_common(gen_kp)
     dists = np.linalg.norm(ref_norm - gen_norm, axis=1)
     e = dists ** 2 / (2 * OKS_SIGMAS ** 2 + 1e-8)
     ks = np.exp(-e)
