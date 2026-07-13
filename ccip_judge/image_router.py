@@ -77,6 +77,8 @@ class ImageRouter:
                 "ccip_distance": ("FLOAT", {"forceInput": True}),
                 "oks": ("FLOAT", {"forceInput": True}),
                 "angle_distance": ("FLOAT", {"forceInput": True}),
+                # A6: per-image failure taxonomy from the score nodes
+                "pose_reasons": ("STRING", {"forceInput": True}),
             },
         }
 
@@ -90,7 +92,8 @@ class ImageRouter:
     def route(self, image, pass_mask, save_liked_dir, save_disliked_dir,
               liked_prefix, disliked_prefix, clear_dirs_before_save, csv_dir,
               ccip_threshold, oks_threshold, angle_threshold,
-              ccip_distance=None, oks=None, angle_distance=None):
+              ccip_distance=None, oks=None, angle_distance=None,
+              pose_reasons=None):
         save_liked_dir = _pop_scalar(save_liked_dir, "")
         save_disliked_dir = _pop_scalar(save_disliked_dir, "")
         liked_prefix = _pop_scalar(liked_prefix, "liked")
@@ -144,6 +147,7 @@ class ImageRouter:
                 w.writerow([
                     "index", "ccip", "oks", "angle",
                     "ccip_ok", "oks_ok", "angle_ok", "verdict", "detect_failed",
+                    "pose_debug",
                 ])
                 for i in range(n):
                     c = ccip_list[i] if ccip_list and i < len(ccip_list) else ""
@@ -164,12 +168,16 @@ class ImageRouter:
                     k_ok = "" if k == "" or k_fail else k > oks_t
                     a_ok = "" if a == "" or a_fail else a < ang_t
                     verdict = "LIKED" if mask[i] else "disliked"
+                    pose_debug = ""
+                    if pose_reasons and i < len(pose_reasons):
+                        pose_debug = str(pose_reasons[i] or "")
                     w.writerow([
                         i,
                         f"{c:.4f}" if c != "" and not c_fail else "",
                         f"{k:.4f}" if k != "" and not k_fail else "",
                         f"{a:.4f}" if a != "" and not a_fail else "",
                         c_ok, k_ok, a_ok, verdict, "+".join(fails),
+                        pose_debug,
                     ])
 
         liked_image = pil_list_to_comfy_image(liked_pils)
