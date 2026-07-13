@@ -71,3 +71,28 @@ def test_oks_is_invariant_to_bbox_frame_mismatch():
     score, reason = compute_oks_diag(ref, gen, keypoint_set="portrait")
     assert reason == ""
     assert score is not None and score > 0.99
+
+
+def test_hiding_joints_lowers_oks_not_raises_it():
+    # P1-2 (review 07-14): with a common-joints-only denominator, suppressing
+    # detection of the WRONG joints raised the score. The denominator is now
+    # the reference-side expected joints; a missing generated joint scores 0.
+    idx = list(range(11))
+    ref = _pose(idx)
+    honest = _pose(idx)
+    hider = _pose(idx[:7])            # face(5) + shoulders(2), wrists hidden
+    full, r1 = compute_oks_diag(ref, honest, keypoint_set="portrait")
+    partial, r2 = compute_oks_diag(ref, hider, keypoint_set="portrait")
+    assert r1 == "" and r2 == ""
+    assert full > 0.99
+    assert partial < full - 0.2       # 7/11 of the credit at best
+
+
+def test_portrait_requires_both_shoulders():
+    # face-only high confidence must not be scoreable when the reference
+    # expects shoulders: nose/eyes/ears alone say nothing about pose.
+    ref = _pose(list(range(11)))
+    face_only = _pose([0, 1, 2, 3, 4])
+    score, reason = compute_oks_diag(ref, face_only, keypoint_set="portrait")
+    assert score is None
+    assert reason.startswith("missing_required_joints")
