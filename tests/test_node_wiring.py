@@ -106,11 +106,14 @@ def test_router_writes_pose_debug_column(tmp_path, monkeypatch):
         clear_dirs_before_save=[False], csv_dir=[str(tmp_path)],
         ccip_threshold=[0.213], oks_threshold=[0.5], angle_threshold=[0.5],
         ccip_distance=[0.1, 0.2], oks=[0.9, float("nan")],
-        angle_distance=[0.1, 0.2],
-        pose_reasons=["", "insufficient_common_keypoints(ref=1,gen=13,common=1,set=all)"])
+        angle_distance=[0.1, float("nan")],
+        pose_reasons=["", "insufficient_common_keypoints(ref=1,gen=13,common=1,set=all)"],
+        angle_reasons=["", "insufficient_angle_features"])
     csvs = list(tmp_path.glob("scores_*.csv"))
     assert len(csvs) == 1
     lines = csvs[0].read_text(encoding="utf-8").strip().splitlines()
-    assert lines[0].endswith("detect_failed,pose_debug")
-    assert lines[1].endswith(",")                        # row 0: no failure
-    assert "insufficient_common_keypoints" in lines[2]   # row 1: taxonomy
+    # P2: OKS and Angle failure causes get their own columns
+    assert lines[0].endswith("detect_failed,pose_debug,angle_debug")
+    assert lines[1].endswith(",,")                       # row 0: no failures
+    assert "insufficient_common_keypoints" in lines[2]
+    assert lines[2].endswith("insufficient_angle_features")
