@@ -57,24 +57,46 @@ def _normalize(kp, bbox):
     return out
 
 
-def compute_oks(ref_pose, gen_pose, score_threshold=0.3, min_common=3):
-    if ref_pose is None or gen_pose is None:
-        return None
+def compute_oks_diag(ref_pose, gen_pose, score_threshold=0.3, min_common=3,
+                     keypoint_set: str = ""):
+    """(score | None, reason). Failure taxonomy (A6) instead of a bare None
+    -- the 07-14 incident took a live debugging session because the only
+    signal was `detect_failed=pose`. keypoint_set (A4) restricts evaluation
+    to the joints the task's framing can contain (portrait: face..wrists)."""
+    if ref_pose is None:
+        return None, "reference_invalid"
+    if gen_pose is None:
+        return None, "generated_no_person"
     ref_kp, ref_sc = _extract_first(ref_pose)
     gen_kp, gen_sc = _extract_first(gen_pose)
     ref_kp, ref_sc = ref_kp[:17], ref_sc[:17]
     gen_kp, gen_sc = gen_kp[:17], gen_sc[:17]
 
-    common = (ref_sc > score_threshold) & (gen_sc > score_threshold)
+    from .pose_target import KEYPOINT_SETS
+    subset = np.zeros(17, dtype=bool)
+    subset[list(KEYPOINT_SETS.get(keypoint_set, range(17)))] = True
+
+    ref_vis = (ref_sc > score_threshold) & subset
+    gen_vis = (gen_sc > score_threshold) & subset
+    common = ref_vis & gen_vis
     if int(common.sum()) < min_common:
-        return None
+        return None, (
+            "insufficient_common_keypoints"
+            f"(ref={int(ref_vis.sum())},gen={int(gen_vis.sum())},"
+            f"common={int(common.sum())},set={keypoint_set or 'all'})")
 
     ref_norm = _normalize(ref_kp, _get_bbox(ref_pose))
     gen_norm = _normalize(gen_kp, _get_bbox(gen_pose))
     dists = np.linalg.norm(ref_norm - gen_norm, axis=1)
     e = dists ** 2 / (2 * OKS_SIGMAS ** 2 + 1e-8)
     ks = np.exp(-e)
-    return float(ks[common].mean())
+    return float(ks[common].mean()), ""
+
+
+def compute_oks(ref_pose, gen_pose, score_threshold=0.3, min_common=3):
+    score, _reason = compute_oks_diag(ref_pose, gen_pose, score_threshold,
+                                      min_common)
+    return score
 
 
 class OKSScore:
