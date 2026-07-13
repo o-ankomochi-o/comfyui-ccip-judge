@@ -51,6 +51,37 @@ KEYPOINT_SETS = {
     "full_body": tuple(range(0, 17)),
 }
 
+#: detector-score visibility threshold, calibrated 2026-07-13 on the ju_fufu
+#: training set (198 tagged images): at the old 0.3 only 66% of framing-
+#: guaranteed real shoulders passed (10th percentile 0.152); 0.15 passes 90%.
+#: Erroneously admitted low-confidence joints can only ADD distance penalties
+#: under the expected-joint denominator -- the exploit direction stays closed.
+SCORE_THRESHOLD = 0.15
+
+#: DWPose clamps out-of-frame joints to the frame edge: 54% of framing-
+#: impossible joints in the calibration set sat within 2% of the border, at
+#: scores overlapping real joints (phantom ankle 0.179 vs real shoulder
+#: 0.177). Position separates what score cannot.
+BORDER_MARGIN = 0.02
+
+
+def visible_joints(kp, sc, pose_data, score_threshold: float = SCORE_THRESHOLD,
+                   margin: float = BORDER_MARGIN):
+    """Boolean mask of joints that count as measured. Detected poses carry
+    image_shape and get the border rule; authored poses (openpose_json /
+    future rigged-3D) are ground truth, where an edge coordinate is a
+    legitimate position, not a detector clamp."""
+    kp = np.asarray(kp)
+    sc = np.asarray(sc)
+    vis = sc > score_threshold
+    shape = pose_data.get("image_shape") if isinstance(pose_data, dict) else None
+    if shape is not None:
+        h, w = shape
+        on_border = ((kp[:, 0] < w * margin) | (kp[:, 0] > w * (1 - margin)) |
+                     (kp[:, 1] < h * margin) | (kp[:, 1] > h * (1 - margin)))
+        vis = vis & ~on_border
+    return vis
+
 
 def load_openpose_json(path: str) -> dict:
     """Authored OpenPose BODY-18 JSON -> the pose dict the scorers consume
