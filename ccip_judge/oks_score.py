@@ -78,12 +78,23 @@ def compute_oks_diag(ref_pose, gen_pose, score_threshold=0.3, min_common=3,
 
     ref_vis = (ref_sc > score_threshold) & subset
     gen_vis = (gen_sc > score_threshold) & subset
-    common = ref_vis & gen_vis
+    # P1-2 (07-14): the EXPECTED joints are the reference-visible ones.
+    # A generated joint the detector cannot find scores 0 -- hiding wrong
+    # joints must lower the score, never shrink the denominator.
+    expected = ref_vis
+    common = expected & gen_vis
     if int(common.sum()) < min_common:
         return None, (
             "insufficient_common_keypoints"
-            f"(ref={int(ref_vis.sum())},gen={int(gen_vis.sum())},"
+            f"(ref={int(expected.sum())},gen={int(gen_vis.sum())},"
             f"common={int(common.sum())},set={keypoint_set or 'all'})")
+    # required joints: pose without shoulders is not a pose measurement
+    # (face points alone say nothing about body orientation)
+    LEFT_SHOULDER, RIGHT_SHOULDER = 5, 6
+    for name, j in (("left_shoulder", LEFT_SHOULDER),
+                    ("right_shoulder", RIGHT_SHOULDER)):
+        if expected[j] and not gen_vis[j]:
+            return None, f"missing_required_joints({name})"
 
     # P1 (07-14): the two poses live in DIFFERENT frames -- the authored
     # reference spans its canvas, the generated bbox comes from person
@@ -101,7 +112,8 @@ def compute_oks_diag(ref_pose, gen_pose, score_threshold=0.3, min_common=3,
     dists = np.linalg.norm(ref_norm - gen_norm, axis=1)
     e = dists ** 2 / (2 * OKS_SIGMAS ** 2 + 1e-8)
     ks = np.exp(-e)
-    return float(ks[common].mean()), ""
+    # denominator = expected joints; the missing ones contribute 0
+    return float(ks[common].sum() / expected.sum()), ""
 
 
 def compute_oks(ref_pose, gen_pose, score_threshold=0.3, min_common=3):
