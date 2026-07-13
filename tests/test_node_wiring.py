@@ -86,3 +86,31 @@ def test_angle_node_uses_json_reference(tmp_path, monkeypatch):
     assert scores[0] < 0.01 and passes[0] is True and reasons[0] == ""
     assert math.isnan(scores[1]) and reasons[1] == "generated_no_person"
     assert "reference_source=openpose_json" in info
+
+
+def test_router_writes_pose_debug_column(tmp_path, monkeypatch):
+    # A6: the CSV carries the taxonomy string, not just detect_failed=pose.
+    from PIL import Image
+
+    from ccip_judge import image_router as m
+
+    monkeypatch.setattr(m, "comfy_image_to_pil_list",
+                        lambda x: [Image.new("RGB", (8, 8))])
+    monkeypatch.setattr(m, "pil_list_to_comfy_image", lambda pils: pils)
+
+    node = m.ImageRouter()
+    node.route(
+        image=["t1", "t2"], pass_mask=[True, False],
+        save_liked_dir=[""], save_disliked_dir=[""],
+        liked_prefix=["liked"], disliked_prefix=["disliked"],
+        clear_dirs_before_save=[False], csv_dir=[str(tmp_path)],
+        ccip_threshold=[0.213], oks_threshold=[0.5], angle_threshold=[0.5],
+        ccip_distance=[0.1, 0.2], oks=[0.9, float("nan")],
+        angle_distance=[0.1, 0.2],
+        pose_reasons=["", "insufficient_common_keypoints(ref=1,gen=13,common=1,set=all)"])
+    csvs = list(tmp_path.glob("scores_*.csv"))
+    assert len(csvs) == 1
+    lines = csvs[0].read_text(encoding="utf-8").strip().splitlines()
+    assert lines[0].endswith("detect_failed,pose_debug")
+    assert lines[1].endswith(",")                        # row 0: no failure
+    assert "insufficient_common_keypoints" in lines[2]   # row 1: taxonomy
