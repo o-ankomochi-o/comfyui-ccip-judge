@@ -53,3 +53,21 @@ def test_portrait_joint_set_scores_upper_body_pair():
 def test_generated_no_person_is_named():
     score, reason = compute_oks_diag(_pose(range(11)), None)
     assert score is None and reason == "generated_no_person"
+
+
+def test_oks_is_invariant_to_bbox_frame_mismatch():
+    # P1 (review 07-14): the authored reference bbox spans every visible JSON
+    # joint while the generated bbox comes from person DETECTION and may
+    # cover a different extent entirely. The same pose under a similarity
+    # transform + an unrelated detector bbox must still score ~1: distances
+    # are normalized over the COMMON visible joints, not per-side bboxes.
+    idx = list(range(11))
+    ref = _pose(idx)
+    gen = _pose(idx)
+    # same pose, uniformly scaled+shifted, with a deliberately alien bbox
+    gen["keypoints"] = gen["keypoints"] * 0.6 + np.array([37.0, 11.0])
+    gen["bbox"] = [30.0, 5.0, 190.0, 160.0]      # tight detector crop
+    ref["bbox"] = [0.0, 0.0, 800.0, 1200.0]      # full-canvas extent
+    score, reason = compute_oks_diag(ref, gen, keypoint_set="portrait")
+    assert reason == ""
+    assert score is not None and score > 0.99
