@@ -115,54 +115,75 @@ class OKSScore:
             },
             "optional": {
                 "reference_image": ("IMAGE",),
+                # Authored keypoints (A1): when set, the reference comes from
+                # this OpenPose JSON and no reference image is estimated. A
+                # broken JSON RAISES -- fallback to images is a config-level
+                # decision, never this node's own initiative (A5).
+                "reference_pose_json": ("STRING", {"default": "", "multiline": False}),
+                # task joint set (A4): "", "portrait", "full_body"
+                "keypoint_set": ("STRING", {"default": "", "multiline": False}),
             },
         }
 
-    RETURN_TYPES = ("FLOAT", "BOOLEAN", "STRING")
-    RETURN_NAMES = ("oks", "pass_mask", "info")
-    OUTPUT_IS_LIST = (True, True, False)
+    RETURN_TYPES = ("FLOAT", "BOOLEAN", "STRING", "STRING")
+    RETURN_NAMES = ("oks", "pass_mask", "info", "reasons")
+    OUTPUT_IS_LIST = (True, True, False, True)
     FUNCTION = "score"
     CATEGORY = "image_judge"
 
-    def score(self, image, threshold, reference_folder, fail_score, reference_image=None):
-        ref_pils = load_reference_images(reference_image, reference_folder)
-        if not ref_pils:
-            raise RuntimeError(
-                "OKS_Score: no reference images. "
-                "Connect reference_image or set reference_folder."
-            )
+    def score(self, image, threshold, reference_folder, fail_score,
+              reference_image=None, reference_pose_json="", keypoint_set=""):
+        if reference_pose_json:
+            from .pose_target import load_openpose_json
+            ref_poses = [load_openpose_json(reference_pose_json)]
+            ref_source = "openpose_json"
+        else:
+            ref_pils = load_reference_images(reference_image, reference_folder)
+            if not ref_pils:
+                raise RuntimeError(
+                    "OKS_Score: no reference. Connect reference_image, set "
+                    "reference_folder, or set reference_pose_json.")
+            ref_poses = [p for p in (extract_pose(img) for img in ref_pils)
+                         if p is not None]
+            if not ref_poses:
+                raise RuntimeError(
+                    "OKS_Score: pose extraction failed for all reference images.")
+            ref_source = "image"
         gen_pils = comfy_image_to_pil_list(image)
         if not gen_pils:
-            return ([], [], "no input images")
-
-        ref_poses = [extract_pose(img) for img in ref_pils]
-        ref_poses = [p for p in ref_poses if p is not None]
-        if not ref_poses:
-            raise RuntimeError("OKS_Score: pose extraction failed for all reference images.")
+            return ([], [], "no input images", [])
 
         scores: List[float] = []
         passes: List[bool] = []
+        reasons: List[str] = []
         n_detect_fail = 0
         for gen in gen_pils:
             gp = extract_pose(gen)
             per_ref = []
-            if gp is not None:
-                per_ref = [v for v in (compute_oks(rp, gp) for rp in ref_poses)
-                           if v is not None]
+            last_reason = ""
+            for rp in ref_poses:
+                v, reason = compute_oks_diag(rp, gp, keypoint_set=keypoint_set)
+                if v is not None:
+                    per_ref.append(v)
+                else:
+                    last_reason = reason
             if not per_ref:
                 scores.append(float("nan"))
                 passes.append(False)
+                reasons.append(last_reason or "unknown")
                 n_detect_fail += 1
                 continue
             mean_oks = float(np.mean(per_ref))
             scores.append(mean_oks)
             passes.append(mean_oks > threshold)
+            reasons.append("")
 
         valid = [s for s in scores if not math.isnan(s)]
         info = (
-            f"OKS | refs={len(ref_poses)} | n={len(scores)} | "
+            f"OKS | refs={len(ref_poses)} | reference_source={ref_source} | "
+            f"keypoint_set={keypoint_set or 'all'} | n={len(scores)} | "
             f"mean={float(np.mean(valid)) if valid else float('nan'):.4f} | "
             f"pass={sum(passes)}/{len(passes)} (>{threshold}) | "
             f"detect_fail={n_detect_fail}"
         )
-        return (scores, passes, info)
+        return (scores, passes, info, reasons)
