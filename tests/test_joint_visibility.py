@@ -41,3 +41,26 @@ def test_authored_pose_keeps_border_coordinates():
     vis = visible_joints(kp, sc, pose, score_threshold=0.3)
     assert vis[5]
     assert vis[15]         # edge coordinate is a position, not a clamp
+
+
+def test_oks_measures_calibrated_confidence_shoulders():
+    # the v4 preflight refusal: a generated portrait with both shoulders
+    # detected at the CORRECT positions but confidence 0.17 -- below the old
+    # uncalibrated 0.3 gate, above the calibrated one. It must be measured,
+    # not refused as missing_required_joints.
+    from ccip_judge.oks_score import compute_oks_diag
+
+    kp = np.zeros((17, 2), dtype=np.float32)
+    sc = np.zeros(17, dtype=np.float32)
+    for i in range(11):
+        kp[i] = (100 + i * 10, 100 + i * 5)
+        sc[i] = 0.9
+    ref = {"keypoints": kp.copy(), "scores": sc.copy(),
+           "bbox": [0.0, 0.0, 832.0, 1152.0], "source": "openpose_json"}
+    gen_sc = sc.copy()
+    gen_sc[5] = gen_sc[6] = 0.17
+    gen = {"keypoints": kp.copy(), "scores": gen_sc,
+           "bbox": [0.0, 0.0, 832.0, 1152.0], "image_shape": (1152, 832)}
+    score, reason = compute_oks_diag(ref, gen, keypoint_set="portrait")
+    assert reason == ""
+    assert score is not None and score > 0.99   # identical positions
