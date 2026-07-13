@@ -29,3 +29,15 @@ def test_border_clamped_joint_is_invisible_on_detected_pose():
     vis = visible_joints(kp, sc, pose, score_threshold=0.3)
     assert vis[5]          # mid-frame joint counts
     assert not vis[15]     # border-clamped joint never counts
+
+
+def test_authored_pose_keeps_border_coordinates():
+    # an authored JSON legitimately places a joint at the canvas edge; only
+    # DETECTOR output clamps out-of-frame joints there, so authored poses
+    # (no image_shape) must skip the border rule
+    kp, sc = _kp_sc({5: (400, 600, 1.0), 15: (468, 1150, 1.0)})
+    pose = {"keypoints": kp, "scores": sc, "canvas": (832, 1152),
+            "source": "openpose_json"}
+    vis = visible_joints(kp, sc, pose, score_threshold=0.3)
+    assert vis[5]
+    assert vis[15]         # edge coordinate is a position, not a clamp
