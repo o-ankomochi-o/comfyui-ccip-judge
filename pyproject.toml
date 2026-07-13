@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-ccip-judge"
 description = "Anime character image evaluation nodes (CCIP + OKS + Angle) for ComfyUI"
-version = "0.3.0"
+version = "0.4.0"
 license = {text = "MIT"}
 dependencies = [
   "dghs-imgutils>=0.7.0",
