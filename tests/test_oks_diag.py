@@ -1,0 +1,98 @@
+"""compute_oks with task joint sets (A4) and failure taxonomy (A6).
+
+The pilot incident produced only `detect_failed=pose`; diagnosing it took a
+live SSH session. The scorer must say WHICH precondition broke and with what
+counts, and portrait-style tasks must evaluate only the joints the framing
+can contain.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+
+from ccip_judge.oks_score import compute_oks_diag
+
+
+def _pose(visible_idx, n=17, base=100.0):
+    kp = np.zeros((n, 2), dtype=np.float32)
+    sc = np.zeros(n, dtype=np.float32)
+    for i in visible_idx:
+        kp[i] = (base + i * 10, base + i * 5)
+        sc[i] = 0.9
+    return {"keypoints": kp, "scores": sc,
+            "bbox": [0.0, 0.0, 400.0, 600.0]}
+
+
+def test_reference_sparse_is_named_with_counts():
+    # The exact incident: reference has 1 confident keypoint, generated 13.
+    ref = _pose([0])
+    gen = _pose(range(13))
+    score, reason = compute_oks_diag(ref, gen)
+    assert score is None
+    assert reason.startswith("insufficient_common_keypoints")
+    assert "ref=1" in reason and "gen=13" in reason and "common=1" in reason
+
+
+def test_portrait_joint_set_scores_upper_body_pair():
+    # Same upper-body pair fails under the full-body expectation logic only
+    # if commons are too few; with the portrait set (face..wrists) the
+    # comparison is legitimate and returns a real score.
+    ref = _pose(range(11))
+    gen = _pose(range(11))
+    score, reason = compute_oks_diag(ref, gen, keypoint_set="portrait")
+    assert reason == ""
+    assert score is not None and score > 0.99   # identical poses
+
+    # joints OUTSIDE the set must not affect the score
+    gen2 = _pose(list(range(11)) + [15, 16])
+    gen2["keypoints"][15] = (999, 999)
+    score2, _ = compute_oks_diag(ref, gen2, keypoint_set="portrait")
+    assert abs(score2 - score) < 1e-6
+
+
+def test_generated_no_person_is_named():
+    score, reason = compute_oks_diag(_pose(range(11)), None)
+    assert score is None and reason == "generated_no_person"
+
+
+def test_oks_is_invariant_to_bbox_frame_mismatch():
+    # P1 (review 07-14): the authored reference bbox spans every visible JSON
+    # joint while the generated bbox comes from person DETECTION and may
+    # cover a different extent entirely. The same pose under a similarity
+    # transform + an unrelated detector bbox must still score ~1: distances
+    # are normalized over the COMMON visible joints, not per-side bboxes.
+    idx = list(range(11))
+    ref = _pose(idx)
+    gen = _pose(idx)
+    # same pose, uniformly scaled+shifted, with a deliberately alien bbox
+    gen["keypoints"] = gen["keypoints"] * 0.6 + np.array([37.0, 11.0])
+    gen["bbox"] = [30.0, 5.0, 190.0, 160.0]      # tight detector crop
+    ref["bbox"] = [0.0, 0.0, 800.0, 1200.0]      # full-canvas extent
+    score, reason = compute_oks_diag(ref, gen, keypoint_set="portrait")
+    assert reason == ""
+    assert score is not None and score > 0.99
+
+
+def test_hiding_joints_lowers_oks_not_raises_it():
+    # P1-2 (review 07-14): with a common-joints-only denominator, suppressing
+    # detection of the WRONG joints raised the score. The denominator is now
+    # the reference-side expected joints; a missing generated joint scores 0.
+    idx = list(range(11))
+    ref = _pose(idx)
+    honest = _pose(idx)
+    hider = _pose(idx[:7])            # face(5) + shoulders(2), wrists hidden
+    full, r1 = compute_oks_diag(ref, honest, keypoint_set="portrait")
+    partial, r2 = compute_oks_diag(ref, hider, keypoint_set="portrait")
+    assert r1 == "" and r2 == ""
+    assert full > 0.99
+    assert partial < full - 0.2       # 7/11 of the credit at best
+
+
+def test_portrait_requires_both_shoulders():
+    # face-only high confidence must not be scoreable when the reference
+    # expects shoulders: nose/eyes/ears alone say nothing about pose.
+    ref = _pose(list(range(11)))
+    face_only = _pose([0, 1, 2, 3, 4])
+    score, reason = compute_oks_diag(ref, face_only, keypoint_set="portrait")
+    assert score is None
+    assert reason.startswith("missing_required_joints")

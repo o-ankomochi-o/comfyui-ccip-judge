@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-ccip-judge"
 description = "Anime character image evaluation nodes (CCIP + OKS + Angle) for ComfyUI"
-version = "0.3.0"
+version = "0.4.3"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 dependencies = [

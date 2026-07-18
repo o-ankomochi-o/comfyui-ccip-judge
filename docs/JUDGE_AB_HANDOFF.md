@@ -33,7 +33,8 @@ Run inside the same Python environment as ComfyUI:
 ```powershell
 python extras/rejudge_pose_methods.py `
   --manifest G:\path\judge_ab_index.csv `
-  --reference-folder G:\path\action-reach-reference `
+  --reference-pose-json G:\path\action-reach.json `
+  --keypoint-set full_body `
   --output G:\path\judge_ab_scores.csv `
   --methods A B Bprime `
   --oks-threshold 0.5 `
@@ -41,6 +42,18 @@ python extras/rejudge_pose_methods.py `
   --min-valid-reference-ratio 0.5 `
   --pass-rule oks
 ```
+
+For v10cf stability comparisons, `--reference-pose-json action-reach.json`
+and `--keypoint-set full_body` are required. The OpenPose BODY-18 coordinates
+are mapped to COCO-17 by joint name and scored directly; no reference image is
+rendered or pose-estimated. This preserves the authored target definition used
+by judge 0.4.3. `--reference-folder` remains available as a mutually exclusive
+alternative for experiments whose target was defined by reference images.
+
+The CLI writes `<output>.provenance.json` beside the frozen 14-column CSV. It
+records the full reference SHA-256, joint set, thresholds, methods and judge
+commit. Resume refuses a different provenance file, preventing measurements
+from different reference definitions or thresholds from being mixed.
 
 `--pass-rule oks` is the Study 1 requirement comparison. The Angle value is
 still measured, but an unavailable or failing Angle does not change `pass`.
@@ -96,9 +109,12 @@ scores or old verdicts.
 3. Restart ComfyUI only after recording the previous judge SHA.
 4. Run a small smoke manifest.
 5. Verify 3 rows per image and all 14 columns.
-6. Run the frozen 3,097-image manifest.
-7. Copy only the CSV to evocomfy; do not create an import dependency.
-8. Restore the previous SHA if smoke validation fails.
+6. Verify the provenance JSON contains the frozen `action-reach.json` SHA-256
+   and `keypoint_set=full_body`.
+7. Run the frozen 3,097-image manifest.
+8. Copy the CSV and its provenance JSON to evocomfy; do not create an import
+   dependency.
+9. Restore the previous SHA if smoke validation fails.
 
 ## Freeze record
 

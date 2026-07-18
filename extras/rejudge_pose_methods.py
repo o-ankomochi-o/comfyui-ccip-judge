@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import sys
 from pathlib import Path
 
@@ -18,7 +19,11 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ccip_judge.common import file_sha256, load_reference_images
+from ccip_judge.common import (
+    IMAGE_EXTENSIONS,
+    file_sha256,
+    load_reference_images,
+)
 from ccip_judge.dwpose_runner import POSE_METHODS
 from ccip_judge.rejudge import (
     REJUDGE_FIELDS,
@@ -28,12 +33,21 @@ from ccip_judge.rejudge import (
     rejudge_image,
     validate_judge_sha,
 )
+from ccip_judge.pose_target import KEYPOINT_SETS, load_openpose_json
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True)
-    parser.add_argument("--reference-folder", required=True)
+    references = parser.add_mutually_exclusive_group(required=True)
+    references.add_argument(
+        "--reference-folder",
+        help="Image reference folder (poses are estimated per method).",
+    )
+    references.add_argument(
+        "--reference-pose-json",
+        help="Authored OpenPose BODY-18 JSON used directly as the pose target.",
+    )
     parser.add_argument("--output", required=True)
     parser.add_argument(
         "--resume",
@@ -49,6 +63,12 @@ def parse_args():
     parser.add_argument("--oks-threshold", type=float, default=0.5)
     parser.add_argument("--angle-threshold", type=float, default=0.5)
     parser.add_argument("--min-valid-reference-ratio", type=float, default=0.5)
+    parser.add_argument(
+        "--keypoint-set",
+        choices=sorted(KEYPOINT_SETS),
+        default="full_body",
+        help="Task joint set. action-reach/v10cf uses 'full_body'.",
+    )
     parser.add_argument(
         "--pass-rule",
         choices=["oks", "oks_and_angle"],
@@ -75,11 +95,79 @@ def load_manifest(path):
     return rows
 
 
+def _reference_provenance(args):
+    if args.reference_pose_json:
+        path = Path(args.reference_pose_json).resolve()
+        return {
+            "kind": "openpose_json",
+            "sha256": file_sha256(path),
+            "keypoint_set": args.keypoint_set,
+        }
+
+    folder = Path(args.reference_folder).resolve()
+    files = sorted(
+        {
+            path.resolve()
+            for pattern in IMAGE_EXTENSIONS
+            for path in folder.glob(pattern)
+            if path.is_file()
+        },
+        key=lambda path: str(path).lower(),
+    )
+    return {
+        "kind": "image_folder",
+        "files": [
+            {
+                "name": path.name,
+                "sha256": file_sha256(path),
+            }
+            for path in files
+        ],
+        "keypoint_set": args.keypoint_set,
+    }
+
+
+def _write_or_validate_provenance(args, judge_sha, output_path):
+    provenance = {
+        "schema_version": 1,
+        "judge_sha": judge_sha,
+        "methods": list(args.methods),
+        "thresholds": {
+            "oks": args.oks_threshold,
+            "angle": args.angle_threshold,
+            "min_valid_reference_ratio": args.min_valid_reference_ratio,
+            "pass_rule": args.pass_rule,
+        },
+        "reference": _reference_provenance(args),
+    }
+    path = Path(f"{output_path}.provenance.json")
+    if path.exists():
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if existing != provenance:
+            raise RuntimeError(
+                f"{path} does not match this run configuration; "
+                "refusing to mix measurements"
+            )
+    else:
+        path.write_text(
+            json.dumps(provenance, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    return path
+
+
 def main():
     args = parse_args()
-    references = load_reference_images(None, args.reference_folder)
-    if not references:
-        raise RuntimeError(f"no reference images found in {args.reference_folder}")
+    authored_pose = None
+    reference_images = []
+    if args.reference_pose_json:
+        authored_pose = load_openpose_json(args.reference_pose_json)
+    else:
+        reference_images = load_reference_images(None, args.reference_folder)
+        if not reference_images:
+            raise RuntimeError(
+                f"no reference images found in {args.reference_folder}"
+            )
 
     thresholds = RejudgeThresholds(
         oks=args.oks_threshold,
@@ -88,18 +176,27 @@ def main():
         pass_rule=args.pass_rule,
     )
     method_refs = {
-        method: prepare_method_references(references, method)
+        method: prepare_method_references(
+            reference_images,
+            method,
+            authored_pose=authored_pose,
+            keypoint_set=args.keypoint_set,
+        )
         for method in args.methods
     }
     judge_sha = current_judge_sha()
     validate_judge_sha(judge_sha, allow_dirty=args.allow_dirty)
     output_path = Path(args.output)
+    if output_path.exists() and not args.resume:
+        raise RuntimeError(
+            f"{output_path} already exists; use --resume or choose a new output"
+        )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    provenance_path = _write_or_validate_provenance(
+        args, judge_sha, output_path
+    )
     completed = set()
     if output_path.exists():
-        if not args.resume:
-            raise RuntimeError(
-                f"{output_path} already exists; use --resume or choose a new output"
-            )
         with output_path.open("r", encoding="utf-8", newline="") as fp:
             reader = csv.DictReader(fp)
             if tuple(reader.fieldnames or ()) != REJUDGE_FIELDS:
@@ -110,7 +207,6 @@ def main():
                 completed.add((row["image_sha256"], row["method"]))
 
     manifest = load_manifest(args.manifest)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
     mode = "a" if output_path.exists() else "w"
     written = 0
     with output_path.open(mode, encoding="utf-8", newline="") as fp:
@@ -153,6 +249,7 @@ def main():
             if image_index % 25 == 0:
                 print(f"processed {image_index}/{len(manifest)} images")
     print(f"wrote {written} new rows to {output_path}")
+    print(f"provenance: {provenance_path}")
 
 
 if __name__ == "__main__":

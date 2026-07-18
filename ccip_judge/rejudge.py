@@ -38,7 +38,7 @@ from .dwpose_runner import (
     normalize_pose_method,
 )
 from .oks_score import (
-    compute_oks,
+    compute_oks_diag,
     valid_oks_reference,
 )
 
@@ -79,6 +79,7 @@ class RejudgeThresholds:
 class MethodReferences:
     poses: list
     angle_features: list
+    keypoint_set: str = ""
 
 
 def _minimum_valid(total: int, ratio: float) -> int:
@@ -86,14 +87,35 @@ def _minimum_valid(total: int, ratio: float) -> int:
 
 
 def prepare_method_references(
-    reference_images: Sequence[Image.Image], method: str
+    reference_images: Sequence[Image.Image],
+    method: str,
+    authored_pose=None,
+    keypoint_set: str = "",
 ) -> MethodReferences:
     normalized = normalize_pose_method(method)
+    if authored_pose is not None:
+        if not valid_oks_reference(
+            authored_pose, keypoint_set=keypoint_set
+        ):
+            raise RuntimeError(
+                "authored pose has fewer than 3 visible task keypoints"
+            )
+        angle = compute_angle_features(authored_pose)
+        if not valid_angle_features(angle):
+            raise RuntimeError(
+                "authored pose has fewer than 2 usable angle features"
+            )
+        return MethodReferences(
+            poses=[authored_pose],
+            angle_features=[angle],
+            keypoint_set=keypoint_set,
+        )
+
     poses = []
     features = []
     for image in reference_images:
         pose, _ = extract_pose_with_diagnostics(image, normalized)
-        if valid_oks_reference(pose):
+        if valid_oks_reference(pose, keypoint_set=keypoint_set):
             poses.append(pose)
         angle = compute_angle_features(pose) if pose is not None else None
         if valid_angle_features(angle):
@@ -106,7 +128,11 @@ def prepare_method_references(
         raise RuntimeError(
             f"method {normalized}: no reference has 2 usable angle features"
         )
-    return MethodReferences(poses=poses, angle_features=features)
+    return MethodReferences(
+        poses=poses,
+        angle_features=features,
+        keypoint_set=keypoint_set,
+    )
 
 
 def _format_score(value: float) -> str:
@@ -117,11 +143,18 @@ def _score_pose(pose, references: MethodReferences, thresholds: RejudgeThreshold
     if pose is None:
         return float("nan"), float("nan"), 0, "no_person", "no_person"
 
-    oks_values = [
-        score
-        for score in (compute_oks(ref, pose) for ref in references.poses)
-        if score is not None
-    ]
+    oks_values = []
+    last_oks_reason = ""
+    for ref in references.poses:
+        score, reason = compute_oks_diag(
+            ref,
+            pose,
+            keypoint_set=references.keypoint_set,
+        )
+        if score is not None:
+            oks_values.append(score)
+        else:
+            last_oks_reason = reason
     angle_features = compute_angle_features(pose)
     angle_values = []
     if valid_angle_features(angle_features):
@@ -142,9 +175,13 @@ def _score_pose(pose, references: MethodReferences, thresholds: RejudgeThreshold
         if thresholds.pass_rule == "oks"
         else min(len(oks_values), len(angle_values))
     )
-    oks_failure = (
-        "insufficient_oks_references" if len(oks_values) < min_oks else ""
-    )
+    oks_failure = ""
+    if len(oks_values) < min_oks:
+        oks_failure = (
+            last_oks_reason
+            if not oks_values and last_oks_reason
+            else "insufficient_oks_references"
+        )
     angle_failure = (
         "insufficient_angle_references" if len(angle_values) < min_angle else ""
     )

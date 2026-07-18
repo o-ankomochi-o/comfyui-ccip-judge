@@ -13,6 +13,7 @@ from ccip_judge.rejudge import (
     MethodReferences,
     RejudgeThresholds,
     _score_pose,
+    prepare_method_references,
     rejudge_image,
     validate_judge_sha,
     write_rejudge_csv,
@@ -77,8 +78,8 @@ class RejudgeContractTests(unittest.TestCase):
         refs = MethodReferences(poses=[object(), object()], angle_features=[{}])
         with (
             patch(
-                "ccip_judge.rejudge.compute_oks",
-                side_effect=[0.8, 0.7],
+                "ccip_judge.rejudge.compute_oks_diag",
+                side_effect=[(0.8, ""), (0.7, "")],
             ),
             patch(
                 "ccip_judge.rejudge.compute_angle_features",
@@ -99,6 +100,35 @@ class RejudgeContractTests(unittest.TestCase):
                 RejudgeThresholds(pass_rule="oks"),
             )
         self.assertEqual(result[2], 2)
+
+    def test_authored_pose_reference_never_runs_a_detector(self):
+        keypoints = np.array(
+            [
+                [50, 20], [45, 15], [55, 15], [40, 17], [60, 17],
+                [35, 50], [65, 50], [25, 75], [75, 75], [20, 100],
+                [80, 100], [40, 100], [60, 100], [38, 140], [62, 140],
+                [36, 180], [64, 180],
+            ],
+            dtype=np.float32,
+        )
+        authored = {
+            "keypoints": keypoints,
+            "scores": np.ones(17, dtype=np.float32),
+            "bbox": [20, 15, 80, 180],
+            "source": "openpose_json",
+        }
+        with patch(
+            "ccip_judge.rejudge.extract_pose_with_diagnostics"
+        ) as extract:
+            refs = prepare_method_references(
+                [],
+                "B",
+                authored_pose=authored,
+                keypoint_set="full_body",
+            )
+        extract.assert_not_called()
+        self.assertIs(refs.poses[0], authored)
+        self.assertEqual(refs.keypoint_set, "full_body")
 
     def test_dirty_judge_requires_explicit_smoke_override(self):
         dirty = f"{'a' * 40}-dirty"

@@ -23,6 +23,10 @@ from .common import comfy_image_to_pil_list, load_reference_images
 from .dwpose_runner import extract_pose_cached
 
 
+# Keep the 0.4.x scorer seam patchable while sharing the bounded pose cache.
+extract_pose = extract_pose_cached
+
+
 OKS_SIGMAS = np.array([
     .026, .025, .025, .035, .035,
     .079, .079, .072, .072, .062, .062,
@@ -59,31 +63,93 @@ def _normalize(kp, bbox):
     return out
 
 
-def compute_oks(ref_pose, gen_pose, score_threshold=0.3, min_common=3):
-    if ref_pose is None or gen_pose is None:
-        return None
+def compute_oks_diag(ref_pose, gen_pose, score_threshold=None, min_common=3,
+                     keypoint_set: str = ""):
+    """(score | None, reason). Failure taxonomy (A6) instead of a bare None
+    -- the 07-14 incident took a live debugging session because the only
+    signal was `detect_failed=pose`. keypoint_set (A4) restricts evaluation
+    to the joints the task's framing can contain (portrait: face..wrists).
+    Visibility (which joints count as measured) comes from the calibrated
+    pose_target rules: default threshold + border-clamp suppression for
+    detected poses."""
+    from .pose_target import KEYPOINT_SETS, SCORE_THRESHOLD, visible_joints
+
+    if score_threshold is None:
+        score_threshold = SCORE_THRESHOLD
+    if ref_pose is None:
+        return None, "reference_invalid"
+    if gen_pose is None:
+        return None, "generated_no_person"
     ref_kp, ref_sc = _extract_first(ref_pose)
     gen_kp, gen_sc = _extract_first(gen_pose)
     ref_kp, ref_sc = ref_kp[:17], ref_sc[:17]
     gen_kp, gen_sc = gen_kp[:17], gen_sc[:17]
 
-    common = (ref_sc > score_threshold) & (gen_sc > score_threshold)
-    if int(common.sum()) < min_common:
-        return None
+    subset = np.zeros(17, dtype=bool)
+    subset[list(KEYPOINT_SETS.get(keypoint_set, range(17)))] = True
 
-    ref_norm = _normalize(ref_kp, _get_bbox(ref_pose))
-    gen_norm = _normalize(gen_kp, _get_bbox(gen_pose))
+    ref_vis = visible_joints(ref_kp, ref_sc, ref_pose, score_threshold) & subset
+    gen_vis = visible_joints(gen_kp, gen_sc, gen_pose, score_threshold) & subset
+    # P1-2 (07-14): the EXPECTED joints are the reference-visible ones.
+    # A generated joint the detector cannot find scores 0 -- hiding wrong
+    # joints must lower the score, never shrink the denominator.
+    expected = ref_vis
+    common = expected & gen_vis
+    if int(common.sum()) < min_common:
+        return None, (
+            "insufficient_common_keypoints"
+            f"(ref={int(expected.sum())},gen={int(gen_vis.sum())},"
+            f"common={int(common.sum())},set={keypoint_set or 'all'})")
+    # required joints: pose without shoulders is not a pose measurement
+    # (face points alone say nothing about body orientation)
+    LEFT_SHOULDER, RIGHT_SHOULDER = 5, 6
+    for name, j in (("left_shoulder", LEFT_SHOULDER),
+                    ("right_shoulder", RIGHT_SHOULDER)):
+        if expected[j] and not gen_vis[j]:
+            return None, f"missing_required_joints({name})"
+
+    # P1 (07-14): the two poses live in DIFFERENT frames -- the authored
+    # reference spans its canvas, the generated bbox comes from person
+    # detection and may cover an unrelated crop. Normalize each side over
+    # the extent of the COMMON visible joints (uniform scale), which is
+    # frame- and crop-invariant by construction.
+    def _norm_common(kp):
+        pts = kp[common].astype(np.float32)
+        lo = pts.min(axis=0)
+        scale = max(float((pts.max(axis=0) - lo).max()), 1.0)
+        return (kp.astype(np.float32) - lo) / scale
+
+    ref_norm = _norm_common(ref_kp)
+    gen_norm = _norm_common(gen_kp)
     dists = np.linalg.norm(ref_norm - gen_norm, axis=1)
     e = dists ** 2 / (2 * OKS_SIGMAS ** 2 + 1e-8)
     ks = np.exp(-e)
-    return float(ks[common].mean())
+    # denominator = expected joints; the missing ones contribute 0
+    return float(ks[common].sum() / expected.sum()), ""
 
 
-def valid_oks_reference(pose, score_threshold=0.3, min_keypoints=3) -> bool:
+def compute_oks(ref_pose, gen_pose, score_threshold=None, min_common=3):
+    score, _reason = compute_oks_diag(ref_pose, gen_pose, score_threshold,
+                                      min_common)
+    return score
+
+
+def valid_oks_reference(
+    pose, score_threshold=None, min_keypoints=3, keypoint_set=""
+) -> bool:
     if pose is None:
         return False
-    _, scores = _extract_first(pose)
-    return int((scores[:17] > score_threshold).sum()) >= min_keypoints
+    from .pose_target import KEYPOINT_SETS, SCORE_THRESHOLD, visible_joints
+
+    if score_threshold is None:
+        score_threshold = SCORE_THRESHOLD
+    keypoints, scores = _extract_first(pose)
+    visible = visible_joints(
+        keypoints[:17], scores[:17], pose, score_threshold
+    )
+    subset = np.zeros(17, dtype=bool)
+    subset[list(KEYPOINT_SETS.get(keypoint_set, range(17)))] = True
+    return int((visible & subset).sum()) >= min_keypoints
 
 
 class OKSScore:
@@ -102,58 +168,86 @@ class OKSScore:
             },
             "optional": {
                 "reference_image": ("IMAGE",),
+                # Authored keypoints (A1): when set, the reference comes from
+                # this OpenPose JSON and no reference image is estimated. A
+                # broken JSON RAISES -- fallback to images is a config-level
+                # decision, never this node's own initiative (A5).
+                "reference_pose_json": ("STRING", {"default": "", "multiline": False}),
+                # task joint set (A4): "", "portrait", "full_body"
+                "keypoint_set": ("STRING", {"default": "", "multiline": False}),
             },
         }
 
-    RETURN_TYPES = ("FLOAT", "BOOLEAN", "STRING")
-    RETURN_NAMES = ("oks", "pass_mask", "info")
-    OUTPUT_IS_LIST = (True, True, False)
+    RETURN_TYPES = ("FLOAT", "BOOLEAN", "STRING", "STRING")
+    RETURN_NAMES = ("oks", "pass_mask", "info", "reasons")
+    OUTPUT_IS_LIST = (True, True, False, True)
     FUNCTION = "score"
     CATEGORY = "image_judge"
 
-    def score(self, image, threshold, reference_folder, fail_score, reference_image=None):
-        ref_pils = load_reference_images(reference_image, reference_folder)
-        if not ref_pils:
-            raise RuntimeError(
-                "OKS_Score: no reference images. "
-                "Connect reference_image or set reference_folder."
-            )
+    def score(self, image, threshold, reference_folder, fail_score,
+              reference_image=None, reference_pose_json="", keypoint_set=""):
+        if reference_pose_json:
+            from .pose_target import load_openpose_json
+            ref_poses = [load_openpose_json(reference_pose_json)]
+            ref_source = "openpose_json"
+        else:
+            ref_pils = load_reference_images(reference_image, reference_folder)
+            if not ref_pils:
+                raise RuntimeError(
+                    "OKS_Score: no reference. Connect reference_image, set "
+                    "reference_folder, or set reference_pose_json.")
+            ref_poses = [
+                p
+                for p in (extract_pose(img) for img in ref_pils)
+                if valid_oks_reference(p, keypoint_set=keypoint_set)
+            ]
+            if not ref_poses:
+                raise RuntimeError(
+                    "OKS_Score: pose extraction failed for all reference images.")
+            ref_source = "image"
+        min_valid_refs = max(
+            1, math.ceil(len(ref_poses) * MIN_VALID_REFERENCE_RATIO)
+        )
         gen_pils = comfy_image_to_pil_list(image)
         if not gen_pils:
-            return ([], [], "no input images")
-
-        ref_poses = [extract_pose_cached(img) for img in ref_pils]
-        ref_poses = [p for p in ref_poses if valid_oks_reference(p)]
-        if not ref_poses:
-            raise RuntimeError(
-                "OKS_Score: every reference has fewer than 3 confident body keypoints."
-            )
-        min_valid_refs = max(1, math.ceil(len(ref_poses) * MIN_VALID_REFERENCE_RATIO))
+            return ([], [], "no input images", [])
 
         scores: List[float] = []
         passes: List[bool] = []
+        reasons: List[str] = []
         n_detect_fail = 0
         for gen in gen_pils:
-            gp = extract_pose_cached(gen)
+            gp = extract_pose(gen)
             per_ref = []
-            if gp is not None:
-                per_ref = [v for v in (compute_oks(rp, gp) for rp in ref_poses)
-                           if v is not None]
+            last_reason = ""
+            for rp in ref_poses:
+                v, reason = compute_oks_diag(rp, gp, keypoint_set=keypoint_set)
+                if v is not None:
+                    per_ref.append(v)
+                else:
+                    last_reason = reason
             if len(per_ref) < min_valid_refs:
                 scores.append(float("nan"))
                 passes.append(False)
+                reasons.append(
+                    last_reason
+                    if not per_ref and last_reason
+                    else "insufficient_oks_references"
+                )
                 n_detect_fail += 1
                 continue
             mean_oks = float(np.mean(per_ref))
             scores.append(mean_oks)
             passes.append(mean_oks > threshold)
+            reasons.append("")
 
         valid = [s for s in scores if not math.isnan(s)]
         info = (
-            f"OKS | refs={len(ref_poses)} | n={len(scores)} | "
+            f"OKS | refs={len(ref_poses)} | reference_source={ref_source} | "
+            f"keypoint_set={keypoint_set or 'all'} | n={len(scores)} | "
             f"min_valid_refs={min_valid_refs} | "
             f"mean={float(np.mean(valid)) if valid else float('nan'):.4f} | "
             f"pass={sum(passes)}/{len(passes)} (>{threshold}) | "
             f"detect_fail={n_detect_fail}"
         )
-        return (scores, passes, info)
+        return (scores, passes, info, reasons)

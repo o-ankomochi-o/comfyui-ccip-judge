@@ -23,6 +23,10 @@ from .dwpose_runner import extract_pose_cached
 from .oks_score import _extract_first
 
 
+# Keep the 0.4.x scorer seam patchable while sharing the bounded pose cache.
+extract_pose = extract_pose_cached
+
+
 MIN_VALID_REFERENCE_RATIO = 0.5
 ANGLE_FEATURE_KEYS = (
     "face_shoulder_ratio",
@@ -32,22 +36,27 @@ ANGLE_FEATURE_KEYS = (
 )
 
 
-def compute_angle_features(pose_data, score_threshold: float = 0.3):
+def compute_angle_features(pose_data, score_threshold: float | None = None):
     if pose_data is None:
         return None
+    from .pose_target import SCORE_THRESHOLD, visible_joints
+
+    if score_threshold is None:
+        score_threshold = SCORE_THRESHOLD
     kp, sc = _extract_first(pose_data)
     kp, sc = kp[:17], sc[:17]
+    vis = visible_joints(kp, sc, pose_data, score_threshold)
     feats = {}
 
-    if sc[0] > score_threshold:
+    if vis[0]:
         face_y = kp[0][1]
-    elif sc[1] > score_threshold and sc[2] > score_threshold:
+    elif vis[1] and vis[2]:
         face_y = (kp[1][1] + kp[2][1]) / 2
     else:
         face_y = None
 
-    left_sh = sc[5] > score_threshold
-    right_sh = sc[6] > score_threshold
+    left_sh = bool(vis[5])
+    right_sh = bool(vis[6])
     if left_sh and right_sh:
         shoulder_y = (kp[5][1] + kp[6][1]) / 2
     elif left_sh:
@@ -57,9 +66,9 @@ def compute_angle_features(pose_data, score_threshold: float = 0.3):
     else:
         shoulder_y = None
 
-    if sc[1] > score_threshold and sc[2] > score_threshold:
+    if vis[1] and vis[2]:
         face_width = abs(kp[1][0] - kp[2][0])
-    elif sc[3] > score_threshold and sc[4] > score_threshold:
+    elif vis[3] and vis[4]:
         face_width = abs(kp[3][0] - kp[4][0]) * 0.7
     else:
         face_width = None
@@ -74,7 +83,7 @@ def compute_angle_features(pose_data, score_threshold: float = 0.3):
     else:
         feats["shoulder_tilt"] = None
 
-    hips_visible = sc[11] > score_threshold and sc[12] > score_threshold
+    hips_visible = bool(vis[11]) and bool(vis[12])
     if left_sh and right_sh and hips_visible:
         sh_y = (kp[5][1] + kp[6][1]) / 2
         hip_y = (kp[11][1] + kp[12][1]) / 2
@@ -86,7 +95,7 @@ def compute_angle_features(pose_data, score_threshold: float = 0.3):
     else:
         feats["torso_length_ratio"] = None
 
-    if sc[0] > score_threshold and sc[1] > score_threshold and sc[2] > score_threshold:
+    if vis[0] and vis[1] and vis[2]:
         eye_y = (kp[1][1] + kp[2][1]) / 2
         eye_w = abs(kp[1][0] - kp[2][0])
         if eye_w > 1:
@@ -139,43 +148,60 @@ class AngleScore:
             },
             "optional": {
                 "reference_image": ("IMAGE",),
+                # Authored keypoints (A5): angle features computed straight
+                # from the JSON. Insufficient features RAISE -- no silent
+                # image fallback inside an experiment.
+                "reference_pose_json": ("STRING", {"default": "", "multiline": False}),
             },
         }
 
-    RETURN_TYPES = ("FLOAT", "BOOLEAN", "STRING")
-    RETURN_NAMES = ("angle_distance", "pass_mask", "info")
-    OUTPUT_IS_LIST = (True, True, False)
+    RETURN_TYPES = ("FLOAT", "BOOLEAN", "STRING", "STRING")
+    RETURN_NAMES = ("angle_distance", "pass_mask", "info", "reasons")
+    OUTPUT_IS_LIST = (True, True, False, True)
     FUNCTION = "score"
     CATEGORY = "image_judge"
 
-    def score(self, image, threshold, reference_folder, fail_score, reference_image=None):
-        ref_pils = load_reference_images(reference_image, reference_folder)
-        if not ref_pils:
-            raise RuntimeError(
-                "Angle_Score: no reference images. "
-                "Connect reference_image or set reference_folder."
-            )
+    def score(self, image, threshold, reference_folder, fail_score,
+              reference_image=None, reference_pose_json=""):
+        if reference_pose_json:
+            from .pose_target import load_openpose_json
+            rf = compute_angle_features(load_openpose_json(reference_pose_json))
+            n_valid = sum(1 for v in (rf or {}).values() if v is not None)
+            if rf is None or n_valid < 2:
+                raise RuntimeError(
+                    "Angle_Score: insufficient_angle_features in "
+                    f"{reference_pose_json} (valid={n_valid}, need>=2)")
+            ref_feats = [rf]
+            ref_source = "openpose_json"
+        else:
+            ref_pils = load_reference_images(reference_image, reference_folder)
+            if not ref_pils:
+                raise RuntimeError(
+                    "Angle_Score: no reference. Connect reference_image, set "
+                    "reference_folder, or set reference_pose_json.")
+            ref_feats = []
+            for img in ref_pils:
+                p = extract_pose(img)
+                rf = compute_angle_features(p) if p is not None else None
+                if valid_angle_features(rf):
+                    ref_feats.append(rf)
+            if not ref_feats:
+                raise RuntimeError(
+                    "Angle_Score: failed to extract angle features from references.")
+            ref_source = "image"
+        min_valid_refs = max(
+            1, math.ceil(len(ref_feats) * MIN_VALID_REFERENCE_RATIO)
+        )
         gen_pils = comfy_image_to_pil_list(image)
         if not gen_pils:
-            return ([], [], "no input images")
-
-        ref_feats = []
-        for img in ref_pils:
-            p = extract_pose_cached(img)
-            rf = compute_angle_features(p) if p is not None else None
-            if valid_angle_features(rf):
-                ref_feats.append(rf)
-        if not ref_feats:
-            raise RuntimeError(
-                "Angle_Score: every reference has fewer than 2 usable angle features."
-            )
-        min_valid_refs = max(1, math.ceil(len(ref_feats) * MIN_VALID_REFERENCE_RATIO))
+            return ([], [], "no input images", [])
 
         scores: List[float] = []
         passes: List[bool] = []
+        reasons: List[str] = []
         n_detect_fail = 0
         for gen in gen_pils:
-            gp = extract_pose_cached(gen)
+            gp = extract_pose(gen)
             gf = compute_angle_features(gp) if gp is not None else None
             per_ref = []
             if gf is not None:
@@ -184,18 +210,21 @@ class AngleScore:
             if len(per_ref) < min_valid_refs:
                 scores.append(float("nan"))
                 passes.append(False)
+                reasons.append("generated_no_person" if gp is None
+                               else "insufficient_angle_features")
                 n_detect_fail += 1
                 continue
             mean_d = float(np.mean(per_ref))
             scores.append(mean_d)
             passes.append(mean_d < threshold)
+            reasons.append("")
 
         valid = [s for s in scores if not math.isnan(s)]
         info = (
-            f"Angle | refs={len(ref_feats)} | n={len(scores)} | "
-            f"min_valid_refs={min_valid_refs} | "
+            f"Angle | refs={len(ref_feats)} | reference_source={ref_source} | "
+            f"n={len(scores)} | min_valid_refs={min_valid_refs} | "
             f"mean={float(np.mean(valid)) if valid else float('nan'):.4f} | "
             f"pass={sum(passes)}/{len(passes)} (<{threshold}) | "
             f"detect_fail={n_detect_fail}"
         )
-        return (scores, passes, info)
+        return (scores, passes, info, reasons)

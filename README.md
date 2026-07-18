@@ -168,3 +168,15 @@ over all references that pass the character-presence check.
 ## License
 
 MIT
+
+
+## 0.4.0 — pose targets
+
+Score against authored keypoints instead of re-estimating a reference image:
+set `reference_pose_json` on OKS/Angle to an OpenPose BODY-18 JSON (named
+mapping to COCO-17; c=0 points stay invisible). `keypoint_set`
+(`portrait`/`full_body`) restricts OKS to the joints the task framing can
+contain. Score nodes emit a per-image `reasons` list
+(`generated_no_person`, `insufficient_common_keypoints(ref=..,gen=..,common=..)`,
+...) which ImageRouter writes to a `pose_debug` CSV column. A broken JSON
+raises -- no silent image fallback inside experiments.
