@@ -8,7 +8,7 @@ comfyui_url: http://127.0.0.1:8188
 workflow_template: ./workflow_api.json
 
 # Directory where ImageRouter writes scores_<ts>.csv.
-csv_dir: /home/spirito/ComfyUI/ComfyUI/ipadapter
+csv_dir: /path/to/comfyui-ccip-judge-output
 
 # Optuna study identification (resume-able via --resume).
 study_name: ccip_judge_tuning

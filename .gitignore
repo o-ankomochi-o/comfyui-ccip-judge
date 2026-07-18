@@ -7,16 +7,20 @@ __pycache__/
 venv/
 .env
 .pytest_cache/
+.pytest-tmp/
 .mypy_cache/
 .ruff_cache/
 .idea/
 .vscode/
+.claude/
 .DS_Store
 Thumbs.db
 *.log
 *.onnx
 build/
 dist/
+_pptx_preview/
+*.pptx
 
 # comfy-cli publish artifacts
 node.zip
