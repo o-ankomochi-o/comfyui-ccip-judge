@@ -4,7 +4,7 @@ ComfyUI custom nodes that automate the 3-stage character-image selection
 pipeline (CCIP + OKS + Angle) used in the LoRA IP-Adapter feedback workflow.
 
 The package replicates the scoring logic from the original Jupyter notebook
-and exposes it as 5 composable nodes, so generated batches can be filtered
+and exposes it as 6 composable nodes, so generated batches can be filtered
 and routed back into `IPAdapterAdvanced` as liked / disliked references.
 
 ## Nodes
@@ -35,7 +35,7 @@ Requirements:
 - `dghs-imgutils` (CCIP)
 - `onnxruntime` (DWPose). Use `onnxruntime-gpu` for CUDA.
 - `huggingface_hub` (downloads `yzd-v/DWPose` ONNX weights on first run)
-- `opencv-python`, `numpy`, `Pillow`
+- `opencv-contrib-python`, `numpy`, `Pillow`
 
 ## Known issues
 
@@ -101,7 +101,26 @@ KSampler -> VAEDecode -> [batch of generated images]
                                                                               IPAdapterAdvanced.image  / image_negative
 ```
 
-See `examples/image_judge_minimal.json` for a minimal ComfyUI workflow.
+See `examples/ccip_judge_minimal.json` for an example ComfyUI workflow.
+The example uses Inspire Pack's `LoadImagesFromDir` node for batch loading.
+
+## A/B/Bprime detector evaluation
+
+The repository includes three pose-detector strategies for the pre-Study-1
+measurement validation:
+
+- `A`: current 0.3.0 behavior (legacy raw YOLOX, then anime retry)
+- `B`: anime detector only
+- `Bprime`: anime detector first, officially decoded YOLOX fallback
+
+They are exposed through `extras/rejudge_pose_methods.py`, not as normal
+workflow widgets, so research comparison cannot accidentally change an
+existing ComfyUI workflow. The tool emits the fixed 14-column CSV consumed by
+evocomfy's blind-review tooling. See
+[`docs/JUDGE_AB_HANDOFF.md`](docs/JUDGE_AB_HANDOFF.md).
+
+The image files and generated review packs are research data and must not be
+committed to this public repository.
 
 ## Score semantics
 
@@ -119,8 +138,8 @@ The original LoRA evaluation report used CCIP `ccip-caformer_b36-24`
 When a generated image's character cannot be detected, the affected
 score is **NaN** instead of a substitute value:
 
-- OKS / Angle: pose extraction failed (no person found, or fewer than
-  3 confident keypoints in common with every reference).
+- OKS / Angle: pose extraction failed, or fewer than half of the valid
+  references can be compared.
 - CCIP: neither the anime person detector nor the anime face detector
   found a character (CCIP itself has no detection step, so this
   presence check guards against confidently scoring an empty image).
@@ -135,14 +154,16 @@ the worst score (OKS 0.0 / Angle 1.0 / CCIP 1.0) in `mean_*` and
 behaviour. The `fail_score` widgets on OKS / Angle are deprecated and
 ignored; they remain only so existing workflow JSONs keep loading.
 
-Reference-side failures are unchanged: if every reference image fails
-extraction the node raises instead of judging blind.
+References with fewer than 3 confident body keypoints are excluded from OKS.
+References with fewer than 2 usable angle features are excluded from Angle.
+If no valid reference remains, the node raises instead of judging blind.
 
 ## Reference aggregation
 
-With multiple reference images, per-generated-image scores are averaged
-across the pool. This matches the user-selected configuration ("平均")
-and the original notebook's behaviour for CCIP.
+With multiple reference images, per-generated-image scores are averaged over
+the comparable valid references. At least 50% of each metric's valid reference
+pool must be comparable; otherwise the generated score is NaN. CCIP averages
+over all references that pass the character-presence check.
 
 ## License
 

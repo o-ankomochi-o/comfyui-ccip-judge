@@ -71,7 +71,20 @@ class CCIPScore:
 
         model_name = (model or DEFAULT_MODEL).strip() or DEFAULT_MODEL
 
-        ref_feats = _ccip_extract_many(ref_pils, model_name)
+        checked_refs = []
+        n_ref_detect_fail = 0
+        for ref in ref_pils:
+            present = detect_character_present(ref)
+            if present is False:
+                n_ref_detect_fail += 1
+                continue
+            checked_refs.append(ref)
+        if not checked_refs:
+            raise RuntimeError(
+                "CCIP_Score: no reference image contains a detectable character."
+            )
+
+        ref_feats = _ccip_extract_many(checked_refs, model_name)
 
         metrics = require_imgutils_metrics()
 
@@ -96,7 +109,8 @@ class CCIPScore:
 
         valid = [d for d in distances if not math.isnan(d)]
         info = (
-            f"CCIP model={model_name} | refs={len(ref_pils)} | "
+            f"CCIP model={model_name} | refs={len(checked_refs)} | "
+            f"ref_detect_fail={n_ref_detect_fail} | "
             f"n={len(distances)} | mean={float(np.mean(valid)) if valid else float('nan'):.4f} | "
             f"pass={sum(passes)}/{len(passes)} (<{threshold}) | "
             f"detect_fail={n_detect_fail}"

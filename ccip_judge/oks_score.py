@@ -20,7 +20,7 @@ from typing import List
 import numpy as np
 
 from .common import comfy_image_to_pil_list, load_reference_images
-from .dwpose_runner import extract_pose
+from .dwpose_runner import extract_pose_cached
 
 
 OKS_SIGMAS = np.array([
@@ -28,6 +28,8 @@ OKS_SIGMAS = np.array([
     .079, .079, .072, .072, .062, .062,
     .107, .107, .087, .087, .089, .089,
 ])
+
+MIN_VALID_REFERENCE_RATIO = 0.5
 
 
 def _extract_first(pose_data):
@@ -77,6 +79,13 @@ def compute_oks(ref_pose, gen_pose, score_threshold=0.3, min_common=3):
     return float(ks[common].mean())
 
 
+def valid_oks_reference(pose, score_threshold=0.3, min_keypoints=3) -> bool:
+    if pose is None:
+        return False
+    _, scores = _extract_first(pose)
+    return int((scores[:17] > score_threshold).sum()) >= min_keypoints
+
+
 class OKSScore:
     """Per-image OKS averaged across the reference pool."""
 
@@ -113,21 +122,24 @@ class OKSScore:
         if not gen_pils:
             return ([], [], "no input images")
 
-        ref_poses = [extract_pose(img) for img in ref_pils]
-        ref_poses = [p for p in ref_poses if p is not None]
+        ref_poses = [extract_pose_cached(img) for img in ref_pils]
+        ref_poses = [p for p in ref_poses if valid_oks_reference(p)]
         if not ref_poses:
-            raise RuntimeError("OKS_Score: pose extraction failed for all reference images.")
+            raise RuntimeError(
+                "OKS_Score: every reference has fewer than 3 confident body keypoints."
+            )
+        min_valid_refs = max(1, math.ceil(len(ref_poses) * MIN_VALID_REFERENCE_RATIO))
 
         scores: List[float] = []
         passes: List[bool] = []
         n_detect_fail = 0
         for gen in gen_pils:
-            gp = extract_pose(gen)
+            gp = extract_pose_cached(gen)
             per_ref = []
             if gp is not None:
                 per_ref = [v for v in (compute_oks(rp, gp) for rp in ref_poses)
                            if v is not None]
-            if not per_ref:
+            if len(per_ref) < min_valid_refs:
                 scores.append(float("nan"))
                 passes.append(False)
                 n_detect_fail += 1
@@ -139,6 +151,7 @@ class OKSScore:
         valid = [s for s in scores if not math.isnan(s)]
         info = (
             f"OKS | refs={len(ref_poses)} | n={len(scores)} | "
+            f"min_valid_refs={min_valid_refs} | "
             f"mean={float(np.mean(valid)) if valid else float('nan'):.4f} | "
             f"pass={sum(passes)}/{len(passes)} (>{threshold}) | "
             f"detect_fail={n_detect_fail}"

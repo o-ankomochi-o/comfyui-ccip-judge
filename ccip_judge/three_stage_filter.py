@@ -44,7 +44,15 @@ class ThreeStageFilter:
         oks_t = float(oks_threshold[0]) if isinstance(oks_threshold, list) else float(oks_threshold)
         ang_t = float(angle_threshold[0]) if isinstance(angle_threshold, list) else float(angle_threshold)
 
-        n = min(len(ccip_distance), len(oks), len(angle_distance))
+        n_c, n_k, n_a = len(ccip_distance), len(oks), len(angle_distance)
+        if not (n_c == n_k == n_a):
+            raise RuntimeError(
+                "ThreeStageFilter: score list lengths differ "
+                f"(ccip={n_c}, oks={n_k}, angle={n_a}). "
+                "All three inputs must cover the same image batch; "
+                "check upstream wiring / stale caches."
+            )
+        n = n_c
         if n == 0:
             return ([], "no scores")
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import glob
+import hashlib
 from typing import List, Optional
 
 import numpy as np
@@ -37,13 +38,34 @@ def pil_list_to_comfy_image(pil_list: List[Image.Image]):
     if torch is None:
         raise RuntimeError("torch is required to build IMAGE tensors")
     if not pil_list:
-        return torch.zeros((1, 8, 8, 3), dtype=torch.float32)
+        # An empty branch must never masquerade as a real black reference
+        # image. ImageRouter converts this condition to an ExecutionBlocker
+        # when running inside ComfyUI; the zero batch is the safe fallback for
+        # tests and non-Comfy callers.
+        return torch.empty((0, 8, 8, 3), dtype=torch.float32)
     arrays = []
     for img in pil_list:
         if img.mode != "RGB":
             img = img.convert("RGB")
         arrays.append(np.asarray(img).astype(np.float32) / 255.0)
     return torch.from_numpy(np.stack(arrays, axis=0))
+
+
+def pil_image_sha256(img: Image.Image) -> str:
+    """Stable hash of canonical RGB pixels for in-memory ComfyUI images."""
+    rgb = img.convert("RGB")
+    digest = hashlib.sha256()
+    digest.update(f"{rgb.width}x{rgb.height}:RGB\0".encode("ascii"))
+    digest.update(rgb.tobytes())
+    return digest.hexdigest()
+
+
+def file_sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fp:
+        for chunk in iter(lambda: fp.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def load_reference_images(
@@ -75,7 +97,8 @@ def load_reference_images(
     for path in paths:
         try:
             pil_refs.append(Image.open(path).convert("RGB"))
-        except Exception:
+        except Exception as e:
+            print(f"[CCIPJudge] WARNING: skipped reference image {path}: {e}")
             continue
     return pil_refs
 

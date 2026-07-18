@@ -16,26 +16,77 @@ from __future__ import annotations
 import csv
 import math
 import os
-import time
+import re
+from datetime import datetime
 from typing import List, Optional
 
-import numpy as np
 from PIL import Image
 
 from .common import comfy_image_to_pil_list, pil_list_to_comfy_image
 
 
+def _sanitize_prefix(prefix, default: str) -> str:
+    """Force prefixes to be plain filename stems: no path separators,
+    reserved characters, or traversal sequences, so a widget value can
+    never write outside the configured directory."""
+    s = str(prefix or "").strip()
+    s = re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", s)
+    s = s.replace("..", "_")
+    s = s.strip(" .")
+    return s or default
+
+
 def _save_batch(pil_list, indices, directory: str, prefix: str, ts: str) -> int:
-    """Save with original batch index in the filename: {prefix}_idx{NN}_{ts}.png"""
+    """Save with original batch index in the filename: {prefix}_idx{NN}_{ts}.png.
+    Never overwrites: on a name collision a numeric suffix is appended."""
     if not directory or not pil_list:
         return 0
     os.makedirs(directory, exist_ok=True)
     n = 0
     for orig_idx, img in zip(indices, pil_list):
-        name = f"{prefix}_idx{orig_idx:05d}_{ts}.png"
-        img.save(os.path.join(directory, name))
+        base = f"{prefix}_idx{orig_idx:05d}_{ts}"
+        path = os.path.join(directory, base + ".png")
+        k = 1
+        while os.path.exists(path):
+            path = os.path.join(directory, f"{base}_{k}.png")
+            k += 1
+        img.save(path)
         n += 1
     return n
+
+
+def _clear_previous_outputs(targets) -> tuple:
+    """Delete only files this node itself wrote earlier: saved images named
+    '{prefix}_idx*.png' and 'scores_*.csv' reports. Reference images or any
+    other user files sharing the directory are left untouched.
+
+    targets: iterable of (directory, matcher) where matcher(lowercase_name)
+    decides whether a file belongs to this node. Returns (n_deleted, failures)
+    with failures as human-readable strings — never silently swallowed."""
+    n_deleted = 0
+    failures: List[str] = []
+    for directory, matcher in targets:
+        if not directory or not os.path.isdir(directory):
+            continue
+        for fn in os.listdir(directory):
+            fp = os.path.join(directory, fn)
+            if not os.path.isfile(fp) or not matcher(fn.lower()):
+                continue
+            try:
+                os.remove(fp)
+                n_deleted += 1
+            except OSError as e:
+                failures.append(f"{fp}: {e}")
+    return n_deleted, failures
+
+
+def _image_matcher(prefix: str):
+    head = f"{prefix.lower()}_idx"
+    return lambda fn: fn.startswith(head) and fn.endswith(".png")
+
+
+def _csv_matcher(fn: str) -> bool:
+    return fn.startswith("scores_") and fn.endswith(".csv")
 
 
 def _pop_scalar(value, default=None):
@@ -52,6 +103,16 @@ def _maybe_floats(values) -> Optional[List[float]]:
     if isinstance(values, list) and len(values) == 0:
         return None
     return [float(v) for v in values]
+
+
+def _image_output(pil_list):
+    if pil_list:
+        return pil_list_to_comfy_image(pil_list)
+    try:
+        from comfy_execution.graph import ExecutionBlocker
+    except ImportError:
+        return pil_list_to_comfy_image([])
+    return ExecutionBlocker(None)
 
 
 class ImageRouter:
@@ -93,8 +154,8 @@ class ImageRouter:
               ccip_distance=None, oks=None, angle_distance=None):
         save_liked_dir = _pop_scalar(save_liked_dir, "")
         save_disliked_dir = _pop_scalar(save_disliked_dir, "")
-        liked_prefix = _pop_scalar(liked_prefix, "liked")
-        disliked_prefix = _pop_scalar(disliked_prefix, "disliked")
+        liked_prefix = _sanitize_prefix(_pop_scalar(liked_prefix, "liked"), "liked")
+        disliked_prefix = _sanitize_prefix(_pop_scalar(disliked_prefix, "disliked"), "disliked")
         clear_dirs_before_save = bool(_pop_scalar(clear_dirs_before_save, False))
         csv_dir = _pop_scalar(csv_dir, "")
         ccip_t = float(_pop_scalar(ccip_threshold, 0.213))
@@ -107,34 +168,46 @@ class ImageRouter:
             pil_all.extend(comfy_image_to_pil_list(img_tensor))
 
         mask = [bool(v) for v in pass_mask]
-        n = min(len(pil_all), len(mask))
+        if len(pil_all) != len(mask):
+            raise RuntimeError(
+                f"ImageRouter: image count ({len(pil_all)}) != pass_mask "
+                f"length ({len(mask)}); check upstream wiring / stale caches."
+            )
+        n = len(pil_all)
 
         liked_idx = [i for i in range(n) if mask[i]]
         disliked_idx = [i for i in range(n) if not mask[i]]
         liked_pils = [pil_all[i] for i in liked_idx]
         disliked_pils = [pil_all[i] for i in disliked_idx]
 
+        n_cleared = 0
+        clear_failures: List[str] = []
         if clear_dirs_before_save:
-            for d in (save_liked_dir, save_disliked_dir, csv_dir):
-                if d and os.path.isdir(d):
-                    for fn in os.listdir(d):
-                        fp = os.path.join(d, fn)
-                        if os.path.isfile(fp) and fn.lower().endswith(
-                            (".png", ".jpg", ".jpeg", ".webp", ".csv")
-                        ):
-                            try:
-                                os.remove(fp)
-                            except OSError:
-                                pass
+            n_cleared, clear_failures = _clear_previous_outputs((
+                (save_liked_dir, _image_matcher(liked_prefix)),
+                (save_disliked_dir, _image_matcher(disliked_prefix)),
+                (csv_dir, _csv_matcher),
+            ))
+            for msg in clear_failures:
+                print(f"[ImageRouter] WARNING: could not delete {msg}")
 
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        n_liked_saved = _save_batch(liked_pils, liked_idx, save_liked_dir, liked_prefix or "liked", ts)
-        n_disliked_saved = _save_batch(disliked_pils, disliked_idx, save_disliked_dir, disliked_prefix or "disliked", ts)
+        # Microsecond timestamp: two runs inside the same second must not
+        # overwrite each other's files.
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        n_liked_saved = _save_batch(liked_pils, liked_idx, save_liked_dir, liked_prefix, ts)
+        n_disliked_saved = _save_batch(disliked_pils, disliked_idx, save_disliked_dir, disliked_prefix, ts)
 
         # Optional CSV report when score lists are connected.
         ccip_list = _maybe_floats(ccip_distance)
         oks_list = _maybe_floats(oks)
         ang_list = _maybe_floats(angle_distance)
+        for name, lst in (("ccip_distance", ccip_list), ("oks", oks_list),
+                          ("angle_distance", ang_list)):
+            if lst is not None and len(lst) != n:
+                raise RuntimeError(
+                    f"ImageRouter: {name} length ({len(lst)}) != image "
+                    f"count ({n}); check upstream wiring / stale caches."
+                )
         csv_path = None
         if csv_dir and (ccip_list or oks_list or ang_list):
             os.makedirs(csv_dir, exist_ok=True)
@@ -172,13 +245,17 @@ class ImageRouter:
                         c_ok, k_ok, a_ok, verdict, "+".join(fails),
                     ])
 
-        liked_image = pil_list_to_comfy_image(liked_pils)
-        disliked_image = pil_list_to_comfy_image(disliked_pils)
+        liked_image = _image_output(liked_pils)
+        disliked_image = _image_output(disliked_pils)
 
         info_parts = [
             f"router n={n} liked={len(liked_pils)} disliked={len(disliked_pils)}",
             f"saved liked={n_liked_saved} disliked={n_disliked_saved}",
         ]
+        if clear_dirs_before_save:
+            info_parts.append(f"cleared={n_cleared}")
+            if clear_failures:
+                info_parts.append(f"clear_failed={len(clear_failures)}")
         if csv_path:
             info_parts.append(f"csv={csv_path}")
         info = " | ".join(info_parts)

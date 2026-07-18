@@ -107,11 +107,23 @@ class ScoreOverlay:
             pil_all.extend(comfy_image_to_pil_list(img_tensor))
 
         mask = [bool(v) for v in pass_mask]
-        n = min(len(pil_all), len(mask))
+        if len(pil_all) != len(mask):
+            raise RuntimeError(
+                f"ScoreOverlay: image count ({len(pil_all)}) != pass_mask "
+                f"length ({len(mask)}); check upstream wiring / stale caches."
+            )
+        n = len(pil_all)
 
         ccip_list = _maybe_floats(ccip_distance)
         oks_list = _maybe_floats(oks)
         ang_list = _maybe_floats(angle_distance)
+        for name, lst in (("ccip_distance", ccip_list), ("oks", oks_list),
+                          ("angle_distance", ang_list)):
+            if lst is not None and len(lst) != n:
+                raise RuntimeError(
+                    f"ScoreOverlay: {name} length ({len(lst)}) != image "
+                    f"count ({n}); check upstream wiring / stale caches."
+                )
 
         annotated: List[Image.Image] = []
         for i in range(n):

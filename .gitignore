@@ -22,3 +22,9 @@ dist/
 node.zip
 *.db
 *_trials.csv
+
+# Research inputs and generated A/B review artifacts must never be published.
+data/judge_ab_review/
+rejudge_output/
+judge_ab_*.csv
+judge_ab_*.jsonl

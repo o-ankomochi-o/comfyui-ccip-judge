@@ -19,8 +19,17 @@ from typing import List, Optional
 import numpy as np
 
 from .common import comfy_image_to_pil_list, load_reference_images
-from .dwpose_runner import extract_pose
+from .dwpose_runner import extract_pose_cached
 from .oks_score import _extract_first
+
+
+MIN_VALID_REFERENCE_RATIO = 0.5
+ANGLE_FEATURE_KEYS = (
+    "face_shoulder_ratio",
+    "shoulder_tilt",
+    "torso_length_ratio",
+    "face_compression",
+)
 
 
 def compute_angle_features(pose_data, score_threshold: float = 0.3):
@@ -93,9 +102,8 @@ def compute_angle_features(pose_data, score_threshold: float = 0.3):
 def angle_distance(ref_feats, gen_feats) -> Optional[float]:
     if ref_feats is None or gen_feats is None:
         return None
-    keys = ["face_shoulder_ratio", "shoulder_tilt", "torso_length_ratio", "face_compression"]
     diffs = []
-    for k in keys:
+    for k in ANGLE_FEATURE_KEYS:
         rv = ref_feats.get(k)
         gv = gen_feats.get(k)
         if rv is None or gv is None:
@@ -107,6 +115,12 @@ def angle_distance(ref_feats, gen_feats) -> Optional[float]:
     if len(diffs) < 2:
         return None
     return float(np.sqrt(np.mean(diffs)))
+
+
+def valid_angle_features(features, minimum=2) -> bool:
+    if not features:
+        return False
+    return sum(features.get(key) is not None for key in ANGLE_FEATURE_KEYS) >= minimum
 
 
 class AngleScore:
@@ -147,24 +161,27 @@ class AngleScore:
 
         ref_feats = []
         for img in ref_pils:
-            p = extract_pose(img)
+            p = extract_pose_cached(img)
             rf = compute_angle_features(p) if p is not None else None
-            if rf is not None:
+            if valid_angle_features(rf):
                 ref_feats.append(rf)
         if not ref_feats:
-            raise RuntimeError("Angle_Score: failed to extract angle features from references.")
+            raise RuntimeError(
+                "Angle_Score: every reference has fewer than 2 usable angle features."
+            )
+        min_valid_refs = max(1, math.ceil(len(ref_feats) * MIN_VALID_REFERENCE_RATIO))
 
         scores: List[float] = []
         passes: List[bool] = []
         n_detect_fail = 0
         for gen in gen_pils:
-            gp = extract_pose(gen)
+            gp = extract_pose_cached(gen)
             gf = compute_angle_features(gp) if gp is not None else None
             per_ref = []
             if gf is not None:
                 per_ref = [v for v in (angle_distance(rf, gf) for rf in ref_feats)
                            if v is not None]
-            if not per_ref:
+            if len(per_ref) < min_valid_refs:
                 scores.append(float("nan"))
                 passes.append(False)
                 n_detect_fail += 1
@@ -176,6 +193,7 @@ class AngleScore:
         valid = [s for s in scores if not math.isnan(s)]
         info = (
             f"Angle | refs={len(ref_feats)} | n={len(scores)} | "
+            f"min_valid_refs={min_valid_refs} | "
             f"mean={float(np.mean(valid)) if valid else float('nan'):.4f} | "
             f"pass={sum(passes)}/{len(passes)} (<{threshold}) | "
             f"detect_fail={n_detect_fail}"
