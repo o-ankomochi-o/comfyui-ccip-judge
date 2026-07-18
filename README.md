@@ -12,10 +12,11 @@ and routed back into `IPAdapterAdvanced` as liked / disliked references.
 | Node                | Inputs                                                  | Outputs                          | Notes |
 |---------------------|---------------------------------------------------------|----------------------------------|-------|
 | **CCIP Score**      | `image`, `threshold`, `model`, `reference_folder`, optional `reference_image` | `distance` (FLOAT list), `pass_mask` (BOOLEAN list), `info` | Uses `dghs-imgutils`; default model `ccip-caformer_b36-24` |
-| **OKS Score**       | `image`, `threshold`, `reference_folder`, `fail_score`, optional `reference_image` | `oks`, `pass_mask`, `info`       | Runs DWPose internally (downloads via HuggingFace Hub on first use); averages OKS across the reference pool |
-| **Angle Score**     | same shape as OKS                                       | `angle_distance`, `pass_mask`, `info` | 4 angle features RMS-combined; averages across references |
+| **OKS Score**       | `image`, `threshold`, `reference_folder`, `fail_score`, optional `reference_image` / `reference_pose_json` / `keypoint_set` | `oks`, `pass_mask`, `info`, `reasons` | Anime-person detector + DWPose; supports authored OpenPose BODY-18 targets |
+| **Angle Score**     | same reference inputs as OKS                            | `angle_distance`, `pass_mask`, `info`, `reasons` | 4 angle features RMS-combined; averages across references |
 | **Three-Stage Filter** | `ccip_distance`, `oks`, `angle_distance` (FLOAT lists) + thresholds | `pass_mask` (BOOLEAN list), `info` | ANDs the three per-image decisions |
-| **Image Router**    | `image`, `pass_mask`, optional save dirs/prefixes        | `liked` (IMAGE), `disliked` (IMAGE), `info` | Always emits both IMAGE branches; saves to disk if directories are set |
+| **Image Router**    | `image`, `pass_mask`, optional save dirs/prefixes        | `liked` (IMAGE), `disliked` (IMAGE), `info` | Blocks an empty branch instead of emitting a fake black image; saves to disk if configured |
+| **Score Overlay**   | `image`, optional score lists and `pass_mask`            | annotated `image`, `info` | Draws score/failure labels for preview |
 
 All score nodes accept the reference pool either as an `IMAGE` batch
 (connect multiple `LoadImage` via `ImageBatch`) or as a folder path. If
@@ -52,9 +53,9 @@ something this repo's `requirements.txt` can fix:
   3.13 wheels, so pip falls back to building numpy from source, which
   fails on machines without a C/C++ compiler.
 
-When `imgutils` is missing, only **CCIP Score** is affected; the other
-nodes still work. A warning with instructions is printed at ComfyUI
-startup, and CCIP Score raises the same instructions if executed.
+When `imgutils` is missing, **CCIP Score** and the anime-person detection
+used by **OKS / Angle** cannot run. A warning with instructions is printed
+at ComfyUI startup.
 
 **Options:**
 
@@ -104,23 +105,17 @@ KSampler -> VAEDecode -> [batch of generated images]
 See `examples/ccip_judge_minimal.json` for an example ComfyUI workflow.
 The example uses Inspire Pack's `LoadImagesFromDir` node for batch loading.
 
-## A/B/Bprime detector evaluation
+## Pose detector
 
-The repository includes three pose-detector strategies for the pre-Study-1
-measurement validation:
+Version 0.5.0 uses the anime-trained person detector from `dghs-imgutils`
+as the only bbox source for DWPose. A frozen pre-Study-1 comparison found
+identical pass decisions across the legacy, anime-only and YOLOX-fallback
+strategies on 1,526 unique v10cf images. The legacy YOLOX never supplied a
+successful primary result, so its model download and inference path were
+removed.
 
-- `A`: current 0.3.0 behavior (legacy raw YOLOX, then anime retry)
-- `B`: anime detector only
-- `Bprime`: anime detector first, officially decoded YOLOX fallback
-
-They are exposed through `extras/rejudge_pose_methods.py`, not as normal
-workflow widgets, so research comparison cannot accidentally change an
-existing ComfyUI workflow. The tool emits the fixed 14-column CSV consumed by
-evocomfy's blind-review tooling. See
-[`docs/JUDGE_AB_HANDOFF.md`](docs/JUDGE_AB_HANDOFF.md).
-
-The image files and generated review packs are research data and must not be
-committed to this public repository.
+The complete comparison implementation remains reproducible at Git tag
+`judge-ab-evaluation-20260719`.
 
 ## Score semantics
 
@@ -170,7 +165,7 @@ over all references that pass the character-presence check.
 MIT
 
 
-## 0.4.0 — pose targets
+## Authored pose targets
 
 Score against authored keypoints instead of re-estimating a reference image:
 set `reference_pose_json` on OKS/Angle to an OpenPose BODY-18 JSON (named
